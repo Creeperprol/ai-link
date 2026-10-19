@@ -3,7 +3,8 @@
 A Claude Code plugin that links several Claude Code sessions on one machine.
 
 - `/sessions`, `/tell <name> <msg>`, `/tellall <msg>`: list and message other sessions
-- `/host`: make a session the host; `/assign <name|all> <task>` hands out work, results come back to `/board`
+- `/host`: make a session the host; `/assign <name|auto|all> <task>` hands out work (`auto` picks the least-loaded worker), results come back to `/board`
+- The host's model is told how to run workers (contract first, even sizing, verify reports); a worker holding a task works silently and reports with its context size
 - `/spawn [dir] [-- first task]`: open a new Terminal.app window running `claude` (host only, macOS)
 - Side pane ("Sessions"): peers, tasks, and a **Switch to** button that raises another session's Terminal.app window
 - Model tools: `assign`, `report`, `rename`, `peers`, `spawn`
