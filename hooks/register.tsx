@@ -531,6 +531,8 @@ export const register: Register = (on, options) => {
             await announce($, renamed, await $.session.cwd())
             await remember($, { at: now, dir: 'in', who: h.name, text: `renamed this session to "${name}"` })
             $.ui.toast(`${h.name} renamed this session to "${name}"`)
+            // The rename is handled here: the model never reads it, so the worker does not answer it.
+            return { consumed: 'rename applied' }
           }
         } else if (result) {
           const id = result[1]
