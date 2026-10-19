@@ -187,7 +187,10 @@ const spawnTerminal = async ($: any, dir: string, prompt: string): Promise<strin
 
 // Asks one worker to take a new session name.
 async function renameWorker($: any, who: Me, p: Peer, name: string): Promise<string | null> {
-  return deliver($, who, p, `[RENAME host=${who.id}]\n${name}`)
+  const failed = await deliver($, who, p, `[RENAME host=${who.id}]\n${name}`)
+  // Remember a worker the host has named, so auto-rename never overrides it (the peer list can lag behind a rename).
+  if (!failed) await $.store.set(`named:${p.id}`, true)
+  return failed
 }
 
 // Empties the whole board (the pane's Clear board button).
@@ -208,9 +211,10 @@ async function assign($: any, who: Me, p: Peer, text: string): Promise<string | 
   const body = `[TASK ${id} host=${who.id} name="${who.name}"]\n${text}\n\nWhen you are finished, call the tool ${T_REPORT} with task_id "${id}" and a short result.`
   const failed = await deliver($, who, p, body)
   // A worker still on its random default name is renamed after its first task.
-  if (!failed && /-[0-9a-f]{4}$/.test(p.name)) {
+  if (!failed && /-[0-9a-f]{4}$/.test(p.name) && !(await $.store.get(`named:${p.id}`))) {
     const short = cleanName(text).split(' ').slice(0, 3).join('-').toLowerCase().replace(/[^a-z0-9-]/g, '').slice(0, 20)
-    if (short) await renameWorker($, who, p, short)
+    const taken = (await listPeers($, who.id)).some(q => q.id !== p.id && q.name === short)
+    if (short) await renameWorker($, who, p, taken ? `${short}-${p.id.slice(0, 2)}` : short)
   }
   const t: Task = { id, toId: p.id, toName: p.name, text, status: failed ? 'failed' : 'sent', at: await $.clock.now() }
   await update($, tasks, l => [...l.filter(x => x.status !== 'failed' || t.at - x.at < 600000), t].slice(-30))
