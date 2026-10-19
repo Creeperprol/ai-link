@@ -231,10 +231,13 @@ test('a worker holding a host task is told to only work and report', async ($, o
   stand(on, sent, store)
   on('prompt.compose', async () => ({ sections: [] })) // stands for the engine's own prompt beneath the plugin
   await $.session.start({ source: 'startup', cwd: '/work/me' } as any)
+  const facts = { model: 'm', promptModel: 'm', surfaces: [], tools: [], outputStyle: null, traits: [] } as any
   const quiet = (r: any) => JSON.stringify(r.sections).includes('session-link:silent-worker')
-  expect(quiet(await $.prompt.compose({ model: 'm', promptModel: 'm', surfaces: [], tools: [], outputStyle: null, traits: [] } as any))).toBe(false)
+  expect(quiet(await $.prompt.compose(facts))).toBe(false)
   await $.session.receive({ origin: { kind: 'peer' }, text: '[TASK t1 host=hhhh0000 name="boss"]\ndo it\n\nWhen you are finished, call x' } as any)
-  expect(quiet(await $.prompt.compose({ model: 'm', promptModel: 'm', surfaces: [], tools: [], outputStyle: null, traits: [] } as any))).toBe(true)
+  expect(quiet(await $.prompt.compose(facts))).toBe(true)
   await $.tool.call({ tool: 'mcp__session-link__report', task_id: 't1', result: 'done' } as any)
-  expect(quiet(await $.prompt.compose({ model: 'm', promptModel: 'm', surfaces: [], tools: [], outputStyle: null, traits: [] } as any))).toBe(false)
+  expect(quiet(await $.prompt.compose(facts))).toBe(true) // still quiet: a stop hook's feedback may follow the report
+  await $.prompt.submit({ text: 'hello', origin: { kind: 'composer' } } as any).catch(() => {})
+  expect(quiet(await $.prompt.compose(facts))).toBe(false) // the person typing ends the quiet spell
 })
