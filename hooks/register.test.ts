@@ -222,3 +222,17 @@ test('a stale or foreign handoff is ignored', async ($, on) => {
   expect(store.get('host')).toMatchObject({ id: 'old00000' })
   expect(store.get('peer:aaaa1111-0000')).toMatchObject({ name: 'me-aaaa' })
 })
+
+test('a worker holding a host task is told to only work and report', async ($, on) => {
+  const sent: any[] = []
+  const store = new Map<string, unknown>([['host', { id: 'hhhh0000', name: 'boss' }]])
+  stand(on, sent, store)
+  on('prompt.compose', async () => ({ sections: [] })) // stands for the engine's own prompt beneath the plugin
+  await $.session.start({ source: 'startup', cwd: '/work/me' } as any)
+  const quiet = (r: any) => JSON.stringify(r.sections).includes('session-link:silent-worker')
+  expect(quiet(await $.prompt.compose({ model: 'm', promptModel: 'm', surfaces: [], tools: [], outputStyle: null, traits: [] } as any))).toBe(false)
+  await $.session.receive({ origin: { kind: 'peer' }, text: '[TASK t1 host=hhhh0000 name="boss"]\ndo it\n\nWhen you are finished, call x' } as any)
+  expect(quiet(await $.prompt.compose({ model: 'm', promptModel: 'm', surfaces: [], tools: [], outputStyle: null, traits: [] } as any))).toBe(true)
+  await $.tool.call({ tool: 'mcp__session-link__report', task_id: 't1', result: 'done' } as any)
+  expect(quiet(await $.prompt.compose({ model: 'm', promptModel: 'm', surfaces: [], tools: [], outputStyle: null, traits: [] } as any))).toBe(false)
+})

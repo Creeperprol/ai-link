@@ -424,6 +424,11 @@ export const register: Register = (on, options) => {
       to: { sessionId: found.hostId },
       text: `[RESULT ${id} from="${who.name}"]\n${String(input.result ?? '')}`,
     })
+    // The task is done: drop it so the worker goes back to normal once nothing is left.
+    if (r.isDelivered) {
+      await update($, inbox, l => l.filter(i => i.id !== id))
+      $.ui.invalidate('ui.render')
+    }
     return { result: r.isDelivered ? 'Result sent to the host.' : `Could not reach the host: ${r.reason}` }
   })
 
@@ -466,6 +471,26 @@ export const register: Register = (on, options) => {
       if (f) failures.push(f)
     }
     return { text: `Sent to ${list.length - failures.length}/${list.length} sessions.${failures.length ? '\n' + failures.join('\n') : ''}` }
+  })
+
+  // Multi-window: while this session holds a host task, the model only does the work and reports.
+  on('prompt.compose', async ($, e, next) => {
+    const r = await next(e)
+    try {
+      if ((await read($, inbox)).length === 0 || (await isHost($, await getMe($)))) return r
+    } catch {
+      return r
+    }
+    return {
+      sections: [
+        ...r.sections,
+        {
+          id: 'session-link:silent-worker',
+          scope: 'session' as const,
+          text: `You are a worker in a multi-window setup and a host session has given you a task. Do only that task. Write no chat text between tool calls and no summary or thanks at the end: your only output is tool calls. Do not ask the user questions or offer next steps. When the work is done, call ${T_REPORT} once with the task_id and a short result (one or two sentences), then stop.`,
+        },
+      ],
+    }
   })
 
   // Record what other sessions say to this one; the model still reads it as usual.
