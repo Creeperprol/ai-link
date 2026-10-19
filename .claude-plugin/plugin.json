@@ -1,0 +1,20 @@
+{
+  "name": "session-link",
+  "version": "0.3.0",
+  "description": "Session link for Claude Code: sessions message each other, a host hands out tasks, spawn Terminal windows and switch between sessions from the side pane",
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "name": {
+      "type": "string",
+      "title": "Session name",
+      "description": "How other sessions see this one (default: folder name + short id)",
+      "default": ""
+    },
+    "autoRun": {
+      "type": "boolean",
+      "title": "Auto-run tasks from the host",
+      "description": "When on, a task the host assigns starts a turn in this session at once. Off: the task is only shown, and runs when you act on it.",
+      "default": false
+    }
+  }
+}
