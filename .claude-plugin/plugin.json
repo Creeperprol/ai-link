@@ -1,6 +1,6 @@
 {
   "name": "session-link",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "description": "Session link for Claude Code: sessions message each other, a host hands out tasks, spawn Terminal windows and switch between sessions from the side pane",
   "types": "./types/index.d.ts",
   "userConfig": {
