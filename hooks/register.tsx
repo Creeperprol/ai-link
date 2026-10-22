@@ -279,20 +279,52 @@ const startPaneTimer = ($: any, restart = false) => {
 }
 
 // Agent CLIs running on this machine, for the pane: other tools (agy, Codex, Qwen, ...) register with the link-bridge MCP server, which writes one small file per session under ~/.session-link/peers. Read only; a missing folder or bad file just means none.
-type CliPeer = { cli: string; name: string; cwd: string; seen: number }
+type CliPeer = { cli: string; name: string; cwd: string; seen: number; up: number }
 const BRIDGE_FRESH_MS = 60 * 1000
+// One shell call reads the live bridge entries (a dead process is dropped at once; each line starts with the process's elapsed time) and, after a #PROCS line, counts the agent CLI processes that have a terminal, which are the open windows (background daemons have none).
+const BRIDGE_SCRIPT = [
+  'for f in "$HOME"/.session-link/peers/*.json; do',
+  '  [ -f "$f" ] || continue',
+  `  pid=$(sed -n 's/.*"pid":\\([0-9]*\\).*/\\1/p' "$f"); [ -n "$pid" ] || continue`,
+  '  kill -0 "$pid" 2>/dev/null || continue',
+  `  et=$(ps -o etime= -p "$pid" 2>/dev/null | tr -d ' ')`,
+  '  printf \'%s\\t\' "${et:-00:00}"; cat "$f"; echo',
+  'done',
+  "echo '#PROCS'",
+  `ps -axo tty=,comm= | awk '$1 != "??" && $1 != "-" { n = split($2, a, "/"); c[a[n]]++ } END { for (k in c) print c[k], k }' | grep -E ' (codex|agy|qwen|claude|gemini)$'`,
+  'true',
+].join('\n')
+// A window of a CLI can leave several bridge servers (Codex starts one per conversation, and keeps old ones alive), so one row per CLI and folder, and no more rows than there are running processes of that CLI.
+// ps's elapsed time ([[dd-]hh:]mm:ss) in seconds; 0 when unreadable.
+const etimeSecs = (t: string): number => {
+  const m = /^(?:(\d+)-)?(?:(\d+):)?(\d+):(\d+)$/.exec(t.trim())
+  return m ? Number(m[1] ?? 0) * 86400 + Number(m[2] ?? 0) * 3600 + Number(m[3]) * 60 + Number(m[4]) : 0
+}
 async function bridgePeers($: any, now: number): Promise<CliPeer[]> {
   try {
-    const r = await $.process.run(['sh', '-c', 'for f in "$HOME"/.session-link/peers/*.json; do [ -f "$f" ] && { cat "$f"; echo; }; done; true'])
-    const out: CliPeer[] = []
-    for (const line of String(r.stdout ?? '').split('\n')) {
+    const r = await $.process.run(['sh', '-c', BRIDGE_SCRIPT])
+    const [peerPart, procPart = ''] = String(r.stdout ?? '').split('#PROCS')
+    const found: CliPeer[] = []
+    for (const line of peerPart.split('\n')) {
       if (!line.trim()) continue
+      const tab = line.indexOf('\t')
       try {
-        const p = JSON.parse(line) as Partial<CliPeer>
-        if (typeof p.cli === 'string' && typeof p.name === 'string' && now - Number(p.seen) < BRIDGE_FRESH_MS) out.push({ cli: p.cli, name: p.name, cwd: String(p.cwd ?? ''), seen: Number(p.seen) })
+        const p = JSON.parse(tab >= 0 ? line.slice(tab + 1) : line) as Partial<CliPeer>
+        if (typeof p.cli === 'string' && typeof p.name === 'string' && now - Number(p.seen) < BRIDGE_FRESH_MS) {
+          found.push({ cli: p.cli, name: p.name, cwd: String(p.cwd ?? ''), seen: Number(p.seen), up: tab >= 0 ? etimeSecs(line.slice(0, tab)) : 0 })
+        }
       } catch {
         // one bad file does not hide the others
       }
+    }
+    const running = new Map<string, number>()
+    for (const m of procPart.matchAll(/^\s*(\d+)\s+(\S+)\s*$/gm)) running.set(m[2], Number(m[1]))
+    const out: CliPeer[] = []
+    for (const cli of new Set(found.map(f => f.cli))) {
+      const mine = found.filter(f => f.cli === cli).sort((a, z) => a.up - z.up) // youngest first
+      const perFolder = mine.filter((f, k) => mine.findIndex(g => g.cwd === f.cwd) === k)
+      const cap = running.get(cli) ?? 0
+      out.push(...(cap > 0 ? perFolder.slice(0, cap) : perFolder))
     }
     return out
   } catch {

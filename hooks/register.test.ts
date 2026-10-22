@@ -940,3 +940,52 @@ test('a session start still works where timers are not available', async ($, on)
   await $.session.start({ source: 'startup', cwd: '/work/me' } as any)
   expect(store.has('peer:aaaa1111-0000')).toBe(true) // registration is not held up by the timer
 })
+
+// What the bridge-reading shell call prints: "<etime>\t<json>" per live entry, then #PROCS and "<count> <cli>" for windows with a terminal.
+const bridgeOut = (rows: [string, string, string, string][], procs: string[]) =>
+  rows.map(([etime, cli, name, cwd]) => `${etime}\t${bridgeLine(cli, name, cwd, 1000)}`).join('\n') + '\n#PROCS\n' + procs.join('\n') + '\n'
+const paneWith = async ($: any, on: any, stdout: string) => {
+  stand(on, [], new Map())
+  on('process.run', (_$: any, e: any) => ({ value: { exitCode: 0, stdout: JSON.stringify(e).includes('.session-link') ? stdout : '', stderr: '' } }))
+  await $.session.start({ source: 'startup', cwd: '/work/me' } as any)
+  return mountPane($)
+}
+const CODEX_ROWS: [string, string, string, string][] = [
+  ['05:10', 'codex', 'codex-tmp-4061', '/private/tmp'], // two bridge servers for the window in /tmp
+  ['05:58', 'codex', 'codex-tmp-6ae2', '/private/tmp'],
+  ['11:30:07', 'codex', 'codex-home-cc7e', '/Users/me'], // an old conversation the Codex daemon kept alive
+]
+
+test('one open Codex window shows one row, not one per bridge server', async ($, on) => {
+  const ui = await paneWith($, on, bridgeOut(CODEX_ROWS, ['1 codex']))
+  expect(await ui.find({ type: 'Text', text: /codex-tmp-4061/ })).toBeDefined() // the youngest
+  expect(await ui.find({ type: 'Text', text: /codex-tmp-6ae2/ })).toBeUndefined() // same folder
+  expect(await ui.find({ type: 'Text', text: /codex-home-cc7e/ })).toBeUndefined() // more rows than windows
+  expect(await ui.find({ type: 'Text', text: /^ 1$/ })).toBeDefined()
+})
+
+test('two open Codex windows show two rows, one per folder', async ($, on) => {
+  const ui = await paneWith($, on, bridgeOut(CODEX_ROWS, ['2 codex']))
+  expect(await ui.find({ type: 'Text', text: /codex-tmp-4061/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /codex-home-cc7e/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /codex-tmp-6ae2/ })).toBeUndefined()
+})
+
+test('when the window count is unknown the rows are only deduped by folder', async ($, on) => {
+  const ui = await paneWith($, on, bridgeOut(CODEX_ROWS, []))
+  expect(await ui.find({ type: 'Text', text: /codex-tmp-4061/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /codex-home-cc7e/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /codex-tmp-6ae2/ })).toBeUndefined()
+})
+
+test('elapsed times with days and hours order the entries correctly', async ($, on) => {
+  const rows: [string, string, string, string][] = [
+    ['1-02:03:04', 'agy', 'agy-day-old', '/a'],
+    ['00:30', 'agy', 'agy-fresh', '/b'],
+    ['02:00:00', 'agy', 'agy-hours', '/c'],
+  ]
+  const ui = await paneWith($, on, bridgeOut(rows, ['1 agy']))
+  expect(await ui.find({ type: 'Text', text: /agy-fresh/ })).toBeDefined() // 30 s is the youngest
+  expect(await ui.find({ type: 'Text', text: /agy-hours/ })).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: /agy-day-old/ })).toBeUndefined()
+})
