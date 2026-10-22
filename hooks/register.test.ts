@@ -896,7 +896,7 @@ test('the pane lists Claude, agy and Codex sessions under AGENTS', async ($, on)
   expect(await ui.find({ type: 'Text', text: /agy-tmp-5cd6/ })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: /codex-work-cc7e/ })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: /other-bbbb/ })).toBeDefined() // the plugin's own Claude peer
-  expect(await ui.find({ type: 'Text', text: /\(this session\)/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /\(this session\)/ })).toBeUndefined() // this session is in the pane header, not in the list
   expect(await ui.find({ type: 'Text', text: /agy-old-0000/ })).toBeUndefined() // stale
   expect(await ui.find({ type: 'Text', text: /claude-dup-1111/ })).toBeUndefined() // not listed twice
 })

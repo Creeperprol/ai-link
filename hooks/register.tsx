@@ -279,10 +279,9 @@ async function bridgePeers($: any, now: number): Promise<CliPeer[]> {
     return []
   }
 }
-// The pane's CLI groups: Claude (this session plus the other ai-link sessions), then agy and Codex (always shown), then any other CLI that is running.
-const cliGroups = (me: { name: string } | null, claude: Peer[], bridge: CliPeer[]): { cli: string; items: { key: string; name: string; cwd: string; seen: number | null; self?: boolean }[] }[] => {
-  const groups = new Map<string, { key: string; name: string; cwd: string; seen: number | null; self?: boolean }[]>([['claude', []], ['agy', []], ['codex', []]])
-  if (me) groups.get('claude')!.push({ key: 'self', name: me.name, cwd: '', seen: null, self: true })
+// The pane's CLI groups: Claude (the other ai-link sessions; this session is in the pane header), then agy and Codex (always shown), then any other CLI that is running.
+const cliGroups = (claude: Peer[], bridge: CliPeer[]): { cli: string; items: { key: string; name: string; cwd: string; seen: number | null }[] }[] => {
+  const groups = new Map<string, { key: string; name: string; cwd: string; seen: number | null }[]>([['claude', []], ['agy', []], ['codex', []]])
   for (const p of claude) groups.get('claude')!.push({ key: p.id, name: p.name, cwd: p.cwd, seen: p.seen })
   for (const b of bridge) {
     if (b.cli === 'claude') continue // Claude sessions are listed from this plugin's own registry above
@@ -1008,7 +1007,7 @@ export const register: Register = (on, options) => {
       agents = []
     }
     const viewed = e.props.view?.agentId
-    const groups = cliGroups(who, list, await bridgePeers($, now))
+    const groups = cliGroups(list, await bridgePeers($, now))
 
     return (
       <Box flexDirection="column" paddingX={1}>
@@ -1146,7 +1145,7 @@ export const register: Register = (on, options) => {
               <Text key={`cli-${g.cli}-${i.key}`} wrap="truncate">
                 <Text color="green">● </Text>
                 <Text bold>{i.name}</Text>
-                <Text dimColor>{i.self ? ' (this session)' : ` ${i.cwd ? base(i.cwd) + ' ' : ''}${i.seen !== null ? ago(now - i.seen) : ''}`}</Text>
+                <Text dimColor>{` ${i.cwd ? base(i.cwd) + ' ' : ''}${i.seen !== null ? ago(now - i.seen) : ''}`}</Text>
               </Text>
             ))}
           </Box>
