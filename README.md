@@ -1,6 +1,6 @@
-# session-link
+# Agent Link
 
-A Claude Code plugin that links several Claude Code sessions on one machine.
+*(plugin id: `session-link`)* A Claude Code plugin that links several Claude Code sessions on one machine. For other CLIs (Codex, Qwen, Antigravity) use the link-bridge MCP server, which is the other half of Agent Link. One-shot helpers there let Claude use Antigravity (`agy-image.sh`, `agy-worker.sh`) and Codex (`codex-agent.sh`) as agents.
 
 - `/sessions`, `/tell <name> <msg>`, `/tellall <msg>`: list and message other sessions
 - Loading the `multi-window` skill makes the session the host automatically (a `skill.prompt` hook), unless it is a worker holding a task or another host is still running
