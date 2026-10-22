@@ -66,5 +66,4 @@ The plugin id changed from `session-link` to `ai-link` (tools are now `mcp__ai-l
 
 ## Session names
 
-A session is named `claude-<folder>-<id>` by default (the bridge uses `codex-…`, `agy-…`), so every CLI reads alike in the pane. A home folder is called `home`, so a user name never becomes part of a name. A name you set (`/rename`, `/setname`) is kept. Windows that were already running keep their old names until restarted.
-
+A session is named `<cli>-<id>` by default: `claude-ab12` here, `codex-4061` and `agy-95e0` from the bridge, so every CLI reads alike in the pane. The folder is not part of the name (the pane shows it beside the name), so a user name or a project path never ends up in one. A name you set (`/rename`, `/setname`) is kept. Windows that were already running keep their old names until restarted.

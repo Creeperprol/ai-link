@@ -39,9 +39,8 @@ const ago = (ms: number) => {
 // Folder name of a path, whether it uses / (macOS, Linux) or \\ (Windows).
 const base = (cwd: string) => cwd.split(/[\\/]+/).filter(Boolean).pop() ?? 'session'
 
-// The default name of a session: claude-<folder>-<id>, like codex-... and agy-... from the bridge. A home folder is called "home" so a user name never becomes part of a session name.
-const HOME_DIR = /^(?:\/(?:Users|home)\/[^/]+|[A-Za-z]:\\Users\\[^\\]+)[/\\]?$/
-const defaultName = (cwd: string, id: string) => `claude-${HOME_DIR.test(cwd) ? 'home' : base(cwd)}-${id.slice(0, 4)}`
+// The default name of a session: claude-<id>, like codex-<id> and agy-<id> from the bridge. The folder is not part of it (it shows beside the name in the pane), so a user name or a project path never ends up in a session name.
+const defaultName = (_cwd: string, id: string) => `claude-${id.slice(0, 4)}`
 
 async function listPeers($: any, selfId: string): Promise<Peer[]> {
   const now = await $.clock.now()
