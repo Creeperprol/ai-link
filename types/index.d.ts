@@ -14,7 +14,7 @@ export type Inbox = { id: string; hostId: string; hostName: string; text: string
 
 declare module 'claude-code' {
   interface PluginState {
-    'session-link': {
+    'ai-link': {
       // session messaging and host mode
       log: Msg[]
       me: Me | null

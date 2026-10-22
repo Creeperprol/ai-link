@@ -1,6 +1,6 @@
-# Agent Link
+# AI Link
 
-*(plugin id: `session-link`)* A Claude Code plugin that links several Claude Code sessions on one machine. For other CLIs (Codex, Qwen, Antigravity) use the [`link-bridge/`](link-bridge/) MCP server in this repo, which is the other half of Agent Link. One-shot helpers there let Claude use Antigravity (`agy-image.sh`, `agy-worker.sh`) and Codex (`codex-agent.sh`) as agents.
+*(plugin id: `ai-link`)* A Claude Code plugin that links several Claude Code sessions on one machine. For other CLIs (Codex, Qwen, Antigravity) use the [`link-bridge/`](link-bridge/) MCP server in this repo, which is the other half of AI Link. One-shot helpers there let Claude use Antigravity (`agy-image.sh`, `agy-worker.sh`) and Codex (`codex-agent.sh`) as agents.
 
 - `/sessions`, `/tell <name> <msg>`, `/tellall <msg>`: list and message other sessions
 - Loading the `multi-window` skill makes the session the host automatically (a `skill.prompt` hook), unless it is a worker holding a task or another host is still running
@@ -53,8 +53,8 @@ It runs every `*.test.ts` and `*.test.tsx` in the folder, each file in its own c
 [`link-bridge/`](link-bridge/) is a dependency-free MCP server (Node 18+) that lets Claude Code, Codex, Qwen Code and the Antigravity CLI (`agy`) find each other, message each other and hand out work, plus one-shot helpers for using `agy` and Codex as agents. It does not need this plugin and this plugin does not need it; they keep separate registries (this plugin pushes messages between Claude sessions, the bridge is pull-based).
 
 ```
-claude mcp add link --scope user -e LINK_CLI=claude -- node /path/to/session-link/link-bridge/server.mjs
-agy mcp add --env LINK_CLI=agy link "$(command -v node)" /path/to/session-link/link-bridge/server.mjs
+claude mcp add link --scope user -e LINK_CLI=claude -- node /path/to/ai-link/link-bridge/server.mjs
+agy mcp add --env LINK_CLI=agy link "$(command -v node)" /path/to/ai-link/link-bridge/server.mjs
 ```
 
 See [`link-bridge/README.md`](link-bridge/README.md) for the tools, the Antigravity and Codex notes (permissions, folder trust, quota) and the helpers `agy-worker.sh`, `agy-image.sh` and `codex-agent.sh`. Its tests: `node --test link-bridge/test.mjs`.

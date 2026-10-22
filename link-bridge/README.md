@@ -1,6 +1,6 @@
-# Agent Link bridge (link-bridge)
+# AI Link bridge (link-bridge)
 
-The cross-CLI half of Agent Link: works with any MCP-capable CLI. The Claude Code half is the `session-link` plugin.
+The cross-CLI half of AI Link: works with any MCP-capable CLI. The Claude Code half is the `ai-link` plugin.
 
 A tiny MCP server (no dependencies, Node 18+) that lets coding-agent sessions on one machine — Claude Code, Codex, Qwen Code, anything that speaks MCP — find and message each other, and lets one session host and hand out work.
 
@@ -34,7 +34,7 @@ Codex asks before each MCP call; for hands-off use add `default_tools_approval_m
 
 ## How a task reaches a worker
 
-Other CLIs cannot be pushed to: a message sits in the worker's inbox until it calls `link_inbox`. So a worker session needs to be told to check, for example "wait for work with link_inbox (wait_seconds 100), do any task, then call link_report". Inside Claude Code the separate `session-link` plugin does push delivery between Claude sessions.
+Other CLIs cannot be pushed to: a message sits in the worker's inbox until it calls `link_inbox`. So a worker session needs to be told to check, for example "wait for work with link_inbox (wait_seconds 100), do any task, then call link_report". Inside Claude Code the separate `ai-link` plugin does push delivery between Claude sessions.
 
 ## Test
 
