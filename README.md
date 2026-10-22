@@ -59,3 +59,7 @@ agy mcp add --env LINK_CLI=agy link "$(command -v node)" /path/to/ai-link/link-b
 
 See [`link-bridge/README.md`](link-bridge/README.md) for the tools, the Antigravity and Codex notes (permissions, folder trust, quota) and the helpers `agy-worker.sh`, `agy-image.sh` and `codex-agent.sh`. Its tests: `node --test link-bridge/test.mjs`.
 
+## Upgrading from `session-link`
+
+The plugin id changed from `session-link` to `ai-link` (tools are now `mcp__ai-link__*`). Restart every Claude Code window that was open during the upgrade: a window started before it keeps the old id, so its Sessions pane stays empty and it cannot see windows that started after it, because the two ids keep separate registries. A fresh start fixes both.
+
