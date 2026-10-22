@@ -69,3 +69,7 @@ Things that bite:
 - **Verified:** "17 times 23" returned `391` in 12 s; a request to create a file under read-only was refused by the sandbox and reported honestly (8 s, no file); under `workspace-write` the file was created (34 s).
 - **Persistent worker instead?** A Codex session that already has the `link` MCP server (see "Add it to each CLI") can be driven with `link_assign` / `link_inbox` like the other CLIs; use `codex-agent.sh` for fire-and-forget tasks.
 
+
+## Big grid: 12 workers plus one big Claude (`big-grid.sh`)
+
+`./big-grid.sh` opens one tmux window (session `link-grid`, needs `tmux`): the left 75% is a 3 x 4 grid (row 1 Codex `codex-1`..`codex-4`, read-only; row 2 Claude `claude-1`..`claude-4`; row 3 agy `agy-1`..`agy-4`) and the right 25% is one tall Claude, `claude-big`. Every pane registers with its tmux pane, so `link_tell` / `link_assign` type straight into it (a Codex or agy window opened as a plain Terminal tab has no pane and cannot be typed into). Attach with `tmux attach -t link-grid`; stop all 13 with `tmux kill-session -t link-grid`. Folder is `$HOME` and the Claude model is `sonnet`; edit `DIR` / `MODEL` at the top. Each session uses memory, so on an 8 GB Mac watch Memory Pressure.
