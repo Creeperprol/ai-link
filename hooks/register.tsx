@@ -258,6 +258,40 @@ const spawnTerminal = async ($: any, dir: string, prompt: string, opts: SpawnOpt
   }
 }
 
+// Agent CLIs running on this machine, for the pane: other tools (agy, Codex, Qwen, ...) register with the link-bridge MCP server, which writes one small file per session under ~/.session-link/peers. Read only; a missing folder or bad file just means none.
+type CliPeer = { cli: string; name: string; cwd: string; seen: number }
+const BRIDGE_FRESH_MS = 60 * 1000
+async function bridgePeers($: any, now: number): Promise<CliPeer[]> {
+  try {
+    const r = await $.process.run(['sh', '-c', 'for f in "$HOME"/.session-link/peers/*.json; do [ -f "$f" ] && { cat "$f"; echo; }; done; true'])
+    const out: CliPeer[] = []
+    for (const line of String(r.stdout ?? '').split('\n')) {
+      if (!line.trim()) continue
+      try {
+        const p = JSON.parse(line) as Partial<CliPeer>
+        if (typeof p.cli === 'string' && typeof p.name === 'string' && now - Number(p.seen) < BRIDGE_FRESH_MS) out.push({ cli: p.cli, name: p.name, cwd: String(p.cwd ?? ''), seen: Number(p.seen) })
+      } catch {
+        // one bad file does not hide the others
+      }
+    }
+    return out
+  } catch {
+    return []
+  }
+}
+// The pane's CLI groups: Claude (this session plus the other ai-link sessions), then agy and Codex (always shown), then any other CLI that is running.
+const cliGroups = (me: { name: string } | null, claude: Peer[], bridge: CliPeer[]): { cli: string; items: { key: string; name: string; cwd: string; seen: number | null; self?: boolean }[] }[] => {
+  const groups = new Map<string, { key: string; name: string; cwd: string; seen: number | null; self?: boolean }[]>([['claude', []], ['agy', []], ['codex', []]])
+  if (me) groups.get('claude')!.push({ key: 'self', name: me.name, cwd: '', seen: null, self: true })
+  for (const p of claude) groups.get('claude')!.push({ key: p.id, name: p.name, cwd: p.cwd, seen: p.seen })
+  for (const b of bridge) {
+    if (b.cli === 'claude') continue // Claude sessions are listed from this plugin's own registry above
+    if (!groups.has(b.cli)) groups.set(b.cli, [])
+    groups.get(b.cli)!.push({ key: `${b.cli}:${b.name}`, name: b.name, cwd: b.cwd, seen: b.seen })
+  }
+  return [...groups.entries()].map(([cli, items]) => ({ cli, items }))
+}
+
 // How many workers a task gets is the person's call, not a built-in cap: the host passes `limit` on each spawn from what the person asked for, and the `maxWorkers` option is an optional hard ceiling the person may set. With neither, spawning is not limited.
 // Workers counted against a limit: running sessions in the folder it spawns into, plus windows opened a moment ago that have not joined yet.
 const SPAWN_JOIN_MS = 15 * 1000
@@ -974,6 +1008,7 @@ export const register: Register = (on, options) => {
       agents = []
     }
     const viewed = e.props.view?.agentId
+    const groups = cliGroups(who, list, await bridgePeers($, now))
 
     return (
       <Box flexDirection="column" paddingX={1}>
@@ -1101,6 +1136,22 @@ export const register: Register = (on, options) => {
         <Text> </Text>
         <Text dimColor>{'-'.repeat(30)}</Text>
         <Text bold>AGENTS</Text>
+        {groups.map(g => (
+          <Box key={`cli-${g.cli}`} flexDirection="column">
+            <Text>
+              <Text bold color="magenta">{g.cli}</Text>
+              <Text dimColor>{g.items.length === 0 ? ' none' : ` ${g.items.length}`}</Text>
+            </Text>
+            {g.items.map(i => (
+              <Text key={`cli-${g.cli}-${i.key}`} wrap="truncate">
+                <Text color="green">● </Text>
+                <Text bold>{i.name}</Text>
+                <Text dimColor>{i.self ? ' (this session)' : ` ${i.cwd ? base(i.cwd) + ' ' : ''}${i.seen !== null ? ago(now - i.seen) : ''}`}</Text>
+              </Text>
+            ))}
+          </Box>
+        ))}
+        <Text dimColor>subagents</Text>
         {agents.length === 0 ? <Text dimColor>none in this session</Text> : null}
         {viewed ? <Button key="agent-main" label="← Back to main" onPress={() => $.ui.view({})} /> : null}
         {agents.map(a => {

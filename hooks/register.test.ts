@@ -871,3 +871,50 @@ test('an unreadable trust config does not block a spawn', async ($, on) => {
   expect(JSON.stringify(await spawnTask($, '/anywhere'))).toContain('already working')
   expect(opened).toHaveLength(1)
 })
+
+const bridgeLine = (cli: string, name: string, cwd: string, ageMs: number) => JSON.stringify({ id: name, name, cli, cwd, pid: 1, seen: 3600000 - ageMs })
+const mountPane = ($: any) =>
+  $.ui.mount({ plugin: 'ai-link', surface: 'terminal', component: 'Pane', requestId: 'ai-link', props: { bodyColumns: 60 } } as any)
+
+test('the pane lists Claude, agy and Codex sessions under AGENTS', async ($, on) => {
+  const store = new Map<string, unknown>(Object.entries(OTHER_PEER))
+  stand(on, [], store)
+  const lines = [
+    bridgeLine('agy', 'agy-tmp-5cd6', '/private/tmp', 5000),
+    bridgeLine('codex', 'codex-work-cc7e', '/work/pro', 9000),
+    bridgeLine('claude', 'claude-dup-1111', '/work/dup', 1000), // a Claude session: listed from the plugin's own registry, not twice
+    bridgeLine('agy', 'agy-old-0000', '/work/old', 120000), // gone quiet for 2 minutes: not shown
+    bridgeLine('qwen', 'qwen-q-2222', '/work/q', 2000),
+  ].join('\n') + '\n'
+  on('process.run', (_$: any, e: any) => ({ value: { exitCode: 0, stdout: JSON.stringify(e).includes('.session-link') ? lines : '', stderr: '' } }))
+  await $.session.start({ source: 'startup', cwd: '/work/me' } as any)
+  const ui = await mountPane($)
+  expect(await ui.find({ type: 'Text', text: /^claude$/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^agy$/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^codex$/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^qwen$/ })).toBeDefined() // another CLI shows up when it is running
+  expect(await ui.find({ type: 'Text', text: /agy-tmp-5cd6/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /codex-work-cc7e/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /other-bbbb/ })).toBeDefined() // the plugin's own Claude peer
+  expect(await ui.find({ type: 'Text', text: /\(this session\)/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /agy-old-0000/ })).toBeUndefined() // stale
+  expect(await ui.find({ type: 'Text', text: /claude-dup-1111/ })).toBeUndefined() // not listed twice
+})
+
+test('the pane still shows agy and Codex as none when they are not running', async ($, on) => {
+  stand(on, [], new Map())
+  on('process.run', () => ({ value: { exitCode: 0, stdout: '', stderr: '' } }))
+  await $.session.start({ source: 'startup', cwd: '/work/me' } as any)
+  const ui = await mountPane($)
+  expect(await ui.find({ type: 'Text', text: /^agy$/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^codex$/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: / none$/ })).toBeDefined()
+})
+
+test('a broken bridge registry does not break the pane', async ($, on) => {
+  stand(on, [], new Map())
+  on('process.run', () => ({ value: { exitCode: 0, stdout: 'not json\n{"cli":1}\n' + bridgeLine('agy', 'agy-ok-3333', '/w', 1000) + '\n', stderr: '' } }))
+  await $.session.start({ source: 'startup', cwd: '/work/me' } as any)
+  const ui = await mountPane($)
+  expect(await ui.find({ type: 'Text', text: /agy-ok-3333/ })).toBeDefined()
+})
