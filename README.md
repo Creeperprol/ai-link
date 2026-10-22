@@ -64,3 +64,7 @@ See [`link-bridge/README.md`](link-bridge/README.md) for the tools, the Antigrav
 
 The plugin id changed from `session-link` to `ai-link` (tools are now `mcp__ai-link__*`). Restart every Claude Code window that was open during the upgrade: a window started before it keeps the old id, so its Sessions pane stays empty and it cannot see windows that started after it, because the two ids keep separate registries. A fresh start fixes both.
 
+## Session names
+
+A session is named `claude-<folder>-<id>` by default (the bridge uses `codex-…`, `agy-…`), so every CLI reads alike in the pane. A home folder is called `home`, so a user name never becomes part of a name. A name you set (`/rename`, `/setname`) is kept. Windows that were already running keep their old names until restarted.
+

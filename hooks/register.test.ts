@@ -285,7 +285,7 @@ test('a Windows folder path still gives a short session name', async ($, on) => 
   const store = new Map<string, unknown>()
   stand(on, [], store, true, [], 'C:\\Users\\paul\\projects\\my-app')
   await $.session.start({ source: 'startup', cwd: 'C:\\Users\\paul\\projects\\my-app' } as any)
-  expect(JSON.stringify(store.get('peer:aaaa1111-0000'))).toContain('"name":"my-app-aaaa"')
+  expect(JSON.stringify(store.get('peer:aaaa1111-0000'))).toContain('"name":"claude-my-app-aaaa"')
 })
 
 test('after /clear the new session keeps the name and the host role', async ($, on) => {
@@ -308,7 +308,7 @@ test('a stale or foreign handoff is ignored', async ($, on) => {
   stand(on, [], store)
   await $.session.start({ source: 'clear', cwd: '/work/me' } as any)
   expect(store.get('host')).toMatchObject({ id: 'old00000' })
-  expect(store.get('peer:aaaa1111-0000')).toMatchObject({ name: 'me-aaaa' })
+  expect(store.get('peer:aaaa1111-0000')).toMatchObject({ name: 'claude-me-aaaa' })
 })
 
 test('a worker holding a host task is told to only work and report', async ($, on) => {
@@ -1174,4 +1174,29 @@ test('a turn that ran 30 seconds or more ends with a finished notification, a qu
   now.t += 45000
   await tick($)
   expect(shown.filter(s => s.includes('finished (45s)'))).toHaveLength(1)
+})
+
+for (const home of ['/Users/paul', '/Users/paul/', '/home/paul', 'C:\\Users\\paul']) {
+  test(`a session started in the home folder ${home} is named claude-home-..., never after the user name`, async ($, on) => {
+    const store = new Map<string, unknown>()
+    stand(on, [], store, true, [], home)
+    await $.session.start({ source: 'startup', cwd: home } as any)
+    const name = (store.get('peer:aaaa1111-0000') as { name: string }).name
+    expect(name).toBe('claude-home-aaaa')
+    expect(name).not.toContain('paul')
+  })
+}
+
+test('a session in a project folder inside the home folder keeps the project name', async ($, on) => {
+  const store = new Map<string, unknown>()
+  stand(on, [], store, true, [], '/Users/paul/projects/shop')
+  await $.session.start({ source: 'startup', cwd: '/Users/paul/projects/shop' } as any)
+  expect(store.get('peer:aaaa1111-0000')).toMatchObject({ name: 'claude-shop-aaaa' })
+})
+
+test('a name saved for the session is kept over the new default', async ($, on) => {
+  const store = new Map<string, unknown>([['name:aaaa1111-0000', 'worker-2']])
+  stand(on, [], store)
+  await $.session.start({ source: 'startup', cwd: '/Users/paul' } as any)
+  expect(store.get('peer:aaaa1111-0000')).toMatchObject({ name: 'worker-2' })
 })

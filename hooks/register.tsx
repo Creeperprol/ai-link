@@ -39,6 +39,10 @@ const ago = (ms: number) => {
 // Folder name of a path, whether it uses / (macOS, Linux) or \\ (Windows).
 const base = (cwd: string) => cwd.split(/[\\/]+/).filter(Boolean).pop() ?? 'session'
 
+// The default name of a session: claude-<folder>-<id>, like codex-... and agy-... from the bridge. A home folder is called "home" so a user name never becomes part of a session name.
+const HOME_DIR = /^(?:\/(?:Users|home)\/[^/]+|[A-Za-z]:\\Users\\[^\\]+)[/\\]?$/
+const defaultName = (cwd: string, id: string) => `claude-${HOME_DIR.test(cwd) ? 'home' : base(cwd)}-${id.slice(0, 4)}`
+
 async function listPeers($: any, selfId: string): Promise<Peer[]> {
   const now = await $.clock.now()
   const out: Peer[] = []
@@ -123,7 +127,7 @@ async function getMe($: any): Promise<Me | null> {
     const id = String(await $.session.id())
     if (known && known.id === id) return known
     const cwd = await $.session.cwd()
-    const who: Me = { id, name: ((await $.store.get(`name:${id}`)) as string | undefined) || `${base(cwd)}-${id.slice(0, 4)}` }
+    const who: Me = { id, name: ((await $.store.get(`name:${id}`)) as string | undefined) || defaultName(cwd, id) }
     await update($, me, () => who)
     await announce($, who, cwd)
     return who
@@ -582,7 +586,7 @@ export const register: Register = (on, options) => {
         return undefined
       }
     }
-    let name = options.name ? String(options.name) : ((await $.store.get(`name:${id}`)) as string | undefined) || (await envName()) || `${base(cwd)}-${id.slice(0, 4)}`
+    let name = options.name ? String(options.name) : ((await $.store.get(`name:${id}`)) as string | undefined) || (await envName()) || defaultName(cwd, id)
     // /clear starts a new session id: carry the name and the host role over from the one it replaced.
     const carried = (e as { source?: string }).source === 'clear' ? await takeHandoff($, cwd) : null
     if (carried && !options.name) name = carried.name
