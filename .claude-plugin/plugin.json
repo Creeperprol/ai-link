@@ -1,6 +1,6 @@
 {
   "name": "ai-link",
-  "version": "0.8.1",
+  "version": "0.8.2",
   "description": "AI Link for Claude Code: sessions message each other, a host hands out tasks, spawn Terminal windows and switch between sessions from the side pane",
   "types": "./types/index.d.ts",
   "userConfig": {
