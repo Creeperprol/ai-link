@@ -328,7 +328,8 @@ async function bridgePeers($: any, now: number): Promise<CliPeer[]> {
     const out: CliPeer[] = []
     for (const cli of new Set(found.map(f => f.cli))) {
       const mine = found.filter(f => f.cli === cli).sort((a, z) => a.up - z.up) // youngest first
-      const perFolder = mine.filter((f, k) => mine.findIndex(g => g.cwd === f.cwd) === k)
+      // Per folder, as many rows as there are open windows there (at least one), so several windows in one folder each keep a row.
+      const perFolder = mine.filter((f, k) => mine.slice(0, k).filter(g => g.cwd === f.cwd).length < Math.max(1, windows.filter(w => w.cli === cli && w.cwd === f.cwd).length))
       const open = windows.filter(w => w.cli === cli)
       const kept = open.length > 0 ? perFolder.slice(0, open.length) : perFolder
       // Each kept row gets the terminal of the open window in its folder, else of one still unclaimed.
@@ -500,7 +501,17 @@ export const register: Register = (on, options) => {
   on('session.start', async ($, e, next) => {
     const id = await $.session.id()
     const cwd = await $.session.cwd()
-    let name = options.name ? String(options.name) : ((await $.store.get(`name:${id}`)) as string | undefined) || `${base(cwd)}-${id.slice(0, 4)}`
+    // A window started with LINK_NAME in its environment (the tmux grid does) keeps that name; a failed read just means the default.
+    const envName = async (): Promise<string | undefined> => {
+      try {
+        const r = await $.process.run(['sh', '-c', 'printf %s "$LINK_NAME"'])
+        const v = String(r.stdout ?? '').trim()
+        return /^[A-Za-z0-9._-]{1,40}$/.test(v) ? v : undefined
+      } catch {
+        return undefined
+      }
+    }
+    let name = options.name ? String(options.name) : ((await $.store.get(`name:${id}`)) as string | undefined) || (await envName()) || `${base(cwd)}-${id.slice(0, 4)}`
     // /clear starts a new session id: carry the name and the host role over from the one it replaced.
     const carried = (e as { source?: string }).source === 'clear' ? await takeHandoff($, cwd) : null
     if (carried && !options.name) name = carried.name

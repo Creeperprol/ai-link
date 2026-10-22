@@ -979,6 +979,18 @@ test('two open Codex windows show two rows, one per folder', async ($, on) => {
   expect(await ui.find({ type: 'Text', text: /codex-tmp-6ae2/ })).toBeUndefined()
 })
 
+test('several open windows in one folder each keep a row', async ($, on) => {
+  const rows: [string, string, string, string][] = [
+    ['01:00', 'agy', 'agy-a', '/home'],
+    ['02:00', 'agy', 'agy-b', '/home'],
+    ['03:00', 'agy', 'agy-c', '/home'],
+  ]
+  const ui = await paneWith($, on, bridgeOut(rows, [['agy', 'ttys001', '/home'], ['agy', 'ttys002', '/home']]))
+  expect(await ui.find({ type: 'Text', text: /agy-a/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /agy-b/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /agy-c/ })).toBeUndefined() // only two windows are open
+})
+
 test('when no open window is found the rows are only deduped by folder', async ($, on) => {
   const ui = await paneWith($, on, bridgeOut(CODEX_ROWS, []))
   expect(await ui.find({ type: 'Text', text: /codex-tmp-4061/ })).toBeDefined()
