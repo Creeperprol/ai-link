@@ -941,12 +941,20 @@ test('a session start still works where timers are not available', async ($, on)
   expect(store.has('peer:aaaa1111-0000')).toBe(true) // registration is not held up by the timer
 })
 
-// What the bridge-reading shell call prints: "<etime>\t<json>" per live entry, then #PROCS and "<count> <cli>" for windows with a terminal.
-const bridgeOut = (rows: [string, string, string, string][], procs: string[]) =>
-  rows.map(([etime, cli, name, cwd]) => `${etime}\t${bridgeLine(cli, name, cwd, 1000)}`).join('\n') + '\n#PROCS\n' + procs.join('\n') + '\n'
-const paneWith = async ($: any, on: any, stdout: string) => {
-  stand(on, [], new Map())
-  on('process.run', (_$: any, e: any) => ({ value: { exitCode: 0, stdout: JSON.stringify(e).includes('.session-link') ? stdout : '', stderr: '' } }))
+// What the bridge-reading shell call prints: "<etime>\t<json>" per live entry, then #PROCS and "<cli>\t<tty>\t<pid>\t<folder>" per open window.
+type Win = [string, string, string]
+const bridgeOut = (rows: [string, string, string, string][], wins: Win[]) =>
+  rows.map(([etime, cli, name, cwd]) => `${etime}\t${bridgeLine(cli, name, cwd, 1000)}`).join('\n') + '\n#PROCS\n' + wins.map(([cli, tty, cwd], k) => `${cli}\t${tty}\t${1000 + k}\t${cwd}`).join('\n') + '\n'
+const paneWith = async ($: any, on: any, stdout: string, store = new Map<string, unknown>(), osascript: string[] = []) => {
+  stand(on, [], store)
+  on('process.run', (_$: any, e: any) => {
+    const j = JSON.stringify(e)
+    if (j.includes('osascript')) {
+      osascript.push(j)
+      return { value: { exitCode: 0, stdout: 'ok', stderr: '' } }
+    }
+    return { value: { exitCode: 0, stdout: j.includes('.session-link') ? stdout : '', stderr: '' } }
+  })
   await $.session.start({ source: 'startup', cwd: '/work/me' } as any)
   return mountPane($)
 }
@@ -957,7 +965,7 @@ const CODEX_ROWS: [string, string, string, string][] = [
 ]
 
 test('one open Codex window shows one row, not one per bridge server', async ($, on) => {
-  const ui = await paneWith($, on, bridgeOut(CODEX_ROWS, ['1 codex']))
+  const ui = await paneWith($, on, bridgeOut(CODEX_ROWS, [['codex', 'ttys002', '/private/tmp']]))
   expect(await ui.find({ type: 'Text', text: /codex-tmp-4061/ })).toBeDefined() // the youngest
   expect(await ui.find({ type: 'Text', text: /codex-tmp-6ae2/ })).toBeUndefined() // same folder
   expect(await ui.find({ type: 'Text', text: /codex-home-cc7e/ })).toBeUndefined() // more rows than windows
@@ -965,13 +973,13 @@ test('one open Codex window shows one row, not one per bridge server', async ($,
 })
 
 test('two open Codex windows show two rows, one per folder', async ($, on) => {
-  const ui = await paneWith($, on, bridgeOut(CODEX_ROWS, ['2 codex']))
+  const ui = await paneWith($, on, bridgeOut(CODEX_ROWS, [['codex', 'ttys002', '/private/tmp'], ['codex', 'ttys004', '/Users/me']]))
   expect(await ui.find({ type: 'Text', text: /codex-tmp-4061/ })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: /codex-home-cc7e/ })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: /codex-tmp-6ae2/ })).toBeUndefined()
 })
 
-test('when the window count is unknown the rows are only deduped by folder', async ($, on) => {
+test('when no open window is found the rows are only deduped by folder', async ($, on) => {
   const ui = await paneWith($, on, bridgeOut(CODEX_ROWS, []))
   expect(await ui.find({ type: 'Text', text: /codex-tmp-4061/ })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: /codex-home-cc7e/ })).toBeDefined()
@@ -984,8 +992,34 @@ test('elapsed times with days and hours order the entries correctly', async ($, 
     ['00:30', 'agy', 'agy-fresh', '/b'],
     ['02:00:00', 'agy', 'agy-hours', '/c'],
   ]
-  const ui = await paneWith($, on, bridgeOut(rows, ['1 agy']))
+  const ui = await paneWith($, on, bridgeOut(rows, [['agy', 'ttys001', '/b']]))
   expect(await ui.find({ type: 'Text', text: /agy-fresh/ })).toBeDefined() // 30 s is the youngest
   expect(await ui.find({ type: 'Text', text: /agy-hours/ })).toBeUndefined()
   expect(await ui.find({ type: 'Text', text: /agy-day-old/ })).toBeUndefined()
+})
+
+test('a Codex row gets a Switch button that raises the terminal of its own window', async ($, on) => {
+  const osascript: string[] = []
+  const ui = await paneWith($, on, bridgeOut(CODEX_ROWS, [['codex', 'ttys002', '/private/tmp'], ['codex', 'ttys004', '/Users/me']]), new Map(), osascript)
+  expect(await ui.find({ type: 'Button', text: /Switch to codex-tmp-4061/ })).toBeDefined()
+  await ui.press({ key: 'go-codex-codex:codex-tmp-4061' } as any)
+  expect(osascript).toHaveLength(1)
+  expect(osascript[0]).toContain('/dev/ttys002') // the window in /tmp, not the one in the home folder
+  await ui.press({ key: 'go-codex-codex:codex-home-cc7e' } as any)
+  expect(osascript[1]).toContain('/dev/ttys004')
+})
+
+test('a row with no terminal found gets no Switch button', async ($, on) => {
+  const ui = await paneWith($, on, bridgeOut(CODEX_ROWS, []))
+  expect(await ui.find({ type: 'Text', text: /codex-tmp-4061/ })).toBeDefined()
+  expect(await ui.find({ type: 'Button', text: /Switch to codex/ })).toBeUndefined()
+})
+
+test('Claude windows keep their Switch button from the tty they recorded', async ($, on) => {
+  const store = new Map<string, unknown>([['peer:bbbb2222-0000', { ...OTHER, tty: 'ttys009' }]])
+  const osascript: string[] = []
+  const ui = await paneWith($, on, bridgeOut([], []), store, osascript)
+  expect(await ui.find({ type: 'Button', text: /Switch to other-bbbb/ })).toBeDefined()
+  await ui.press({ key: 'go-claude-bbbb2222-0000' } as any)
+  expect(osascript[0]).toContain('/dev/ttys009')
 })

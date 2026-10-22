@@ -279,9 +279,9 @@ const startPaneTimer = ($: any, restart = false) => {
 }
 
 // Agent CLIs running on this machine, for the pane: other tools (agy, Codex, Qwen, ...) register with the link-bridge MCP server, which writes one small file per session under ~/.session-link/peers. Read only; a missing folder or bad file just means none.
-type CliPeer = { cli: string; name: string; cwd: string; seen: number; up: number }
+type CliPeer = { cli: string; name: string; cwd: string; seen: number; up: number; tty?: string }
 const BRIDGE_FRESH_MS = 60 * 1000
-// One shell call reads the live bridge entries (a dead process is dropped at once; each line starts with the process's elapsed time) and, after a #PROCS line, counts the agent CLI processes that have a terminal, which are the open windows (background daemons have none).
+// One shell call reads the live bridge entries (a dead process is dropped at once; each line starts with the process's elapsed time) and, after a #PROCS line, lists the agent CLI processes that have a terminal, which are the open windows (background daemons have none), with their tty and folder.
 const BRIDGE_SCRIPT = [
   'for f in "$HOME"/.session-link/peers/*.json; do',
   '  [ -f "$f" ] || continue',
@@ -291,7 +291,10 @@ const BRIDGE_SCRIPT = [
   '  printf \'%s\\t\' "${et:-00:00}"; cat "$f"; echo',
   'done',
   "echo '#PROCS'",
-  `ps -axo tty=,comm= | awk '$1 != "??" && $1 != "-" { n = split($2, a, "/"); c[a[n]]++ } END { for (k in c) print c[k], k }' | grep -E ' (codex|agy|qwen|claude|gemini)$'`,
+  `ps -axo tty=,pid=,comm= | awk '$1 != "??" && $1 != "-" { n = split($3, a, "/"); print $1, $2, a[n] }' | grep -E ' (codex|agy|qwen|gemini)$' | while read tty pid name; do`,
+  `  cwd=$(lsof -a -d cwd -p "$pid" -Fn 2>/dev/null | sed -n 's/^n//p' | head -1)`,
+  `  printf '%s\\t%s\\t%s\\t%s\\n' "$name" "$tty" "$pid" "$cwd"`,
+  'done',
   'true',
 ].join('\n')
 // A window of a CLI can leave several bridge servers (Codex starts one per conversation, and keeps old ones alive), so one row per CLI and folder, and no more rows than there are running processes of that CLI.
@@ -317,14 +320,26 @@ async function bridgePeers($: any, now: number): Promise<CliPeer[]> {
         // one bad file does not hide the others
       }
     }
-    const running = new Map<string, number>()
-    for (const m of procPart.matchAll(/^\s*(\d+)\s+(\S+)\s*$/gm)) running.set(m[2], Number(m[1]))
+    const windows: { cli: string; tty: string; cwd: string; used: boolean }[] = []
+    for (const line of procPart.split('\n')) {
+      const [name, tty, , cwd] = line.split('\t')
+      if (name && tty) windows.push({ cli: name, tty, cwd: cwd ?? '', used: false })
+    }
     const out: CliPeer[] = []
     for (const cli of new Set(found.map(f => f.cli))) {
       const mine = found.filter(f => f.cli === cli).sort((a, z) => a.up - z.up) // youngest first
       const perFolder = mine.filter((f, k) => mine.findIndex(g => g.cwd === f.cwd) === k)
-      const cap = running.get(cli) ?? 0
-      out.push(...(cap > 0 ? perFolder.slice(0, cap) : perFolder))
+      const open = windows.filter(w => w.cli === cli)
+      const kept = open.length > 0 ? perFolder.slice(0, open.length) : perFolder
+      // Each kept row gets the terminal of the open window in its folder, else of one still unclaimed.
+      for (const row of kept) {
+        const w = open.find(x => !x.used && x.cwd === row.cwd) ?? open.find(x => !x.used)
+        if (w) {
+          w.used = true
+          row.tty = w.tty
+        }
+      }
+      out.push(...kept)
     }
     return out
   } catch {
@@ -332,13 +347,13 @@ async function bridgePeers($: any, now: number): Promise<CliPeer[]> {
   }
 }
 // The pane's CLI groups: Claude (the other ai-link sessions; this session is in the pane header), then agy and Codex (always shown), then any other CLI that is running.
-const cliGroups = (claude: Peer[], bridge: CliPeer[]): { cli: string; items: { key: string; name: string; cwd: string; seen: number | null }[] }[] => {
-  const groups = new Map<string, { key: string; name: string; cwd: string; seen: number | null }[]>([['claude', []], ['agy', []], ['codex', []]])
-  for (const p of claude) groups.get('claude')!.push({ key: p.id, name: p.name, cwd: p.cwd, seen: p.seen })
+const cliGroups = (claude: Peer[], bridge: CliPeer[]): { cli: string; items: { key: string; name: string; cwd: string; seen: number | null; tty?: string }[] }[] => {
+  const groups = new Map<string, { key: string; name: string; cwd: string; seen: number | null; tty?: string }[]>([['claude', []], ['agy', []], ['codex', []]])
+  for (const p of claude) groups.get('claude')!.push({ key: p.id, name: p.name, cwd: p.cwd, seen: p.seen, tty: p.tty })
   for (const b of bridge) {
     if (b.cli === 'claude') continue // Claude sessions are listed from this plugin's own registry above
     if (!groups.has(b.cli)) groups.set(b.cli, [])
-    groups.get(b.cli)!.push({ key: `${b.cli}:${b.name}`, name: b.name, cwd: b.cwd, seen: b.seen })
+    groups.get(b.cli)!.push({ key: `${b.cli}:${b.name}`, name: b.name, cwd: b.cwd, seen: b.seen, tty: b.tty })
   }
   return [...groups.entries()].map(([cli, items]) => ({ cli, items }))
 }
@@ -1068,6 +1083,8 @@ export const register: Register = (on, options) => {
     const viewed = e.props.view?.agentId
     startPaneTimer($) // a hot reload does not rerun session.start, so the first draw starts the redraw timer
     const groups = cliGroups(list, await bridgePeers($, now))
+    // Every row with a terminal can be switched to: Claude windows by their recorded tty, other CLIs by the window found for them.
+    const switchable = groups.flatMap(g => g.items.filter(i => i.tty).map(i => ({ ...i, cli: g.cli })))
 
     return (
       <Box flexDirection="column" paddingX={1}>
@@ -1168,15 +1185,15 @@ export const register: Register = (on, options) => {
           </Text>
         ))}
         <Text> </Text>
-        {list.length ? (
+        {switchable.length ? (
           <Box flexDirection="column" marginBottom={1}>
             <Text bold>SWITCH SESSION</Text>
-            {list.map(p => (
+            {switchable.map(i => (
               <Button
-                key={`go-${p.id}`}
-                label={`Switch to ${p.name}`}
+                key={`go-${i.cli}-${i.key}`}
+                label={`Switch to ${i.name}`}
                 onPress={async () => {
-                  const f = await focusTty($, p.tty)
+                  const f = await focusTty($, i.tty)
                   if (f) $.ui.toast(`Could not switch: ${f}`)
                 }}
               />
