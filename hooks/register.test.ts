@@ -918,3 +918,25 @@ test('a broken bridge registry does not break the pane', async ($, on) => {
   const ui = await mountPane($)
   expect(await ui.find({ type: 'Text', text: /agy-ok-3333/ })).toBeDefined()
 })
+
+test('the pane is redrawn every few seconds, so a CLI that starts or stops shows up without an event', async ($, on) => {
+  const waits: any[] = []
+  stand(on, [], new Map())
+  on('clock.every', (_$: any, e: any) => {
+    waits.push(e)
+    return { value: undefined }
+  })
+  await $.session.start({ source: 'startup', cwd: '/work/me' } as any)
+  expect(waits.length).toBeGreaterThan(0)
+  expect(JSON.stringify(waits[0])).toContain('5000')
+})
+
+test('a session start still works where timers are not available', async ($, on) => {
+  const store = new Map<string, unknown>()
+  stand(on, [], store)
+  on('clock.every', () => {
+    throw new Error('no timers here')
+  })
+  await $.session.start({ source: 'startup', cwd: '/work/me' } as any)
+  expect(store.has('peer:aaaa1111-0000')).toBe(true) // registration is not held up by the timer
+})

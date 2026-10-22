@@ -258,6 +258,26 @@ const spawnTerminal = async ($: any, dir: string, prompt: string, opts: SpawnOpt
   }
 }
 
+// The pane's AGENTS list reads registries outside this plugin, which raise no event when an agent starts or stops, so the pane is redrawn every few seconds.
+const PANE_REFRESH_MS = 5000
+let paneTimer: { cancel: () => void } | null = null
+
+const startPaneTimer = ($: any, restart = false) => {
+  if (paneTimer && !restart) return
+  try {
+    paneTimer?.cancel()
+    paneTimer = $.clock.every(PANE_REFRESH_MS, () => {
+      try {
+        $.ui.invalidate('ui.render')
+      } catch {
+        // a redraw that fails is retried on the next period
+      }
+    })
+  } catch {
+    paneTimer = null // no timers here: the pane then only redraws on events
+  }
+}
+
 // Agent CLIs running on this machine, for the pane: other tools (agy, Codex, Qwen, ...) register with the link-bridge MCP server, which writes one small file per session under ~/.session-link/peers. Read only; a missing folder or bad file just means none.
 type CliPeer = { cli: string; name: string; cwd: string; seen: number }
 const BRIDGE_FRESH_MS = 60 * 1000
@@ -441,6 +461,7 @@ export const register: Register = (on, options) => {
     await update($, me, () => who)
     await announce($, who, cwd)
     if (carried?.host) await setHost($, who, true)
+    startPaneTimer($, true)
 
     const refused: string[] = []
     for (const [name, description] of [
@@ -969,6 +990,12 @@ export const register: Register = (on, options) => {
 
   on('session.end', async ($, e, next) => {
     try {
+      paneTimer?.cancel()
+      paneTimer = null
+    } catch {
+      // already stopped
+    }
+    try {
       const who = await getMe($)
       if (who) {
         // Leave a note so a /clear successor in this folder can pick up the name and the host role.
@@ -1007,6 +1034,7 @@ export const register: Register = (on, options) => {
       agents = []
     }
     const viewed = e.props.view?.agentId
+    startPaneTimer($) // a hot reload does not rerun session.start, so the first draw starts the redraw timer
     const groups = cliGroups(list, await bridgePeers($, now))
 
     return (
