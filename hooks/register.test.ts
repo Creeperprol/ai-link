@@ -1100,3 +1100,78 @@ test('a task with no report for 15 minutes is warned about once', async ($, on) 
   await tick($)
   expect(shown.filter(s => s.includes('no report'))).toHaveLength(1)
 })
+
+test('a report from an agy or Codex worker is announced from its own notifier app', async ($, on) => {
+  const AGY = { id: 'cccc3333-0000', name: 'agy-work-cc33', cwd: '/work/agy', seen: 3600000 }
+  const CODEX = { id: 'dddd4444-0000', name: 'codex-work-dd44', cwd: '/work/codex', seen: 3600000 }
+  const { sent, shown } = await notifyRig($, on, new Map<string, unknown>([['peer:cccc3333-0000', AGY], ['peer:dddd4444-0000', CODEX]]))
+  await run($, 'assign', 'agy-work-cc33 job')
+  await run($, 'assign', 'codex-work-dd44 job')
+  const [a, c] = taskIds(sent)
+  await $.session.receive({ origin: { kind: 'peer' }, text: `[RESULT ${a} from="agy-work-cc33"]\nok ctx ~150k` } as any)
+  await $.session.receive({ origin: { kind: 'peer' }, text: `[RESULT ${c} from="codex-work-dd44"]\nok ctx ~150k` } as any)
+  expect(shown.filter(s => s.includes('ai-link-agy'))).toHaveLength(1)
+  expect(shown.filter(s => s.includes('ai-link-codex'))).toHaveLength(1)
+  expect(shown.filter(s => s.includes('ai-link-notifier'))).toHaveLength(0)
+})
+
+test('the host hears when a Codex or agy window joins or leaves, with that CLI\'s logo', async ($, on) => {
+  let bridge = ''
+  const shown: string[] = []
+  stand(on, [], new Map())
+  on('clock.every', () => ({ value: undefined }))
+  on('turn.complete', () => ({ text: '' }))
+  on('process.run', (_$: any, e: any) => {
+    const j = JSON.stringify(e)
+    if (j.includes('terminal-notifier')) shown.push(j)
+    return { value: { exitCode: 0, stdout: j.includes('#PROCS') ? bridge : '', stderr: '' } }
+  })
+  await $.session.start({ source: 'startup', cwd: '/work/me' } as any)
+  await run($, 'host', '')
+  await $.turn.complete({ answer: '' } as any)
+  expect(shown).toHaveLength(0)
+  bridge = `00:10\t${bridgeLine('codex', 'codex-w-1111', '/w', 1000)}\n#PROCS\n`
+  await $.turn.complete({ answer: '' } as any)
+  expect(shown.filter(s => s.includes('codex-w-1111 joined') && s.includes('ai-link-codex'))).toHaveLength(1)
+  bridge = ''
+  await $.turn.complete({ answer: '' } as any)
+  expect(shown.some(s => s.includes('codex-w-1111 left'))).toBe(true)
+})
+
+test('a report that says it failed or is blocked is announced as such', async ($, on) => {
+  const { sent, shown } = await notifyRig($, on, new Map<string, unknown>(Object.entries(OTHER_PEER)))
+  await run($, 'assign', 'other first job')
+  await $.session.receive({ origin: { kind: 'peer' }, text: `[RESULT ${taskIds(sent)[0]} from="other-bbbb"]\nBLOCKED: no test command` } as any)
+  expect(shown.some(s => s.includes('failed or blocked'))).toBe(true)
+  expect(shown.some(s => s.includes('all tasks done'))).toBe(false)
+})
+
+test('a plain message from another session sends a notification with its text', async ($, on) => {
+  const { shown } = await notifyRig($, on, new Map<string, unknown>())
+  await $.session.receive({ origin: { kind: 'peer' }, text: '[from session "other-bbbb"] build is green' } as any)
+  expect(shown.some(s => s.includes('other-bbbb: build is green'))).toBe(true)
+})
+
+test('a task arriving at a worker sends a system notification', async ($, on) => {
+  const shown: string[] = []
+  stand(on, [], new Map<string, unknown>([['host', { id: 'hhhh0000', name: 'boss' }]]))
+  on('process.run', (_$: any, e: any) => {
+    if (JSON.stringify(e).includes('terminal-notifier')) shown.push(JSON.stringify(e))
+    return { value: { exitCode: 0, stdout: '', stderr: '' } }
+  })
+  await $.session.start({ source: 'startup', cwd: '/work/me' } as any)
+  await $.session.receive({ origin: { kind: 'peer' }, text: '[TASK t9 host=hhhh0000 name="boss"]\ndo it\n\nWhen you are finished, call x' } as any)
+  expect(shown.some(s => s.includes('Task t9 from boss'))).toBe(true)
+})
+
+test('a turn that ran 30 seconds or more ends with a finished notification, a quick one stays quiet', async ($, on) => {
+  const { shown, now } = await notifyRig($, on, new Map<string, unknown>())
+  await $.prompt.submit({ text: 'quick', origin: { kind: 'composer' } } as any).catch(() => {})
+  now.t += 5000
+  await tick($)
+  expect(shown.filter(s => s.includes('finished ('))).toHaveLength(0)
+  await $.prompt.submit({ text: 'long', origin: { kind: 'composer' } } as any).catch(() => {})
+  now.t += 45000
+  await tick($)
+  expect(shown.filter(s => s.includes('finished (45s)'))).toHaveLength(1)
+})

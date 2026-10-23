@@ -262,20 +262,23 @@ const spawnTerminal = async ($: any, dir: string, prompt: string, opts: SpawnOpt
 const PANE_REFRESH_MS = 5000
 let paneTimer: { cancel: () => void } | null = null
 
-// macOS takes a notification's icon from the app that sends it, so the Claude Code icon needs its own copy of terminal-notifier: ~/.session-link/ai-link-notifier.app (made by link-bridge/make-notifier.sh). It can wait for the banner to be dismissed, so it runs in the background. Without it, plain osascript (generic icon).
+// macOS takes a notification's icon from the app that sends it, so each agent CLI has its own copy of terminal-notifier (~/.session-link/<app>.app, made by link-bridge/make-notifier.sh) carrying its logo. It can wait for the banner to be dismissed, so it runs in the background. Without the app, plain osascript (generic icon).
+const NOTIFY_APPS: Record<string, string> = { claude: 'ai-link-notifier', codex: 'ai-link-codex', agy: 'ai-link-agy' }
 const NOTIFY_SCRIPT = [
-  'app="$HOME/.session-link/ai-link-notifier.app/Contents/MacOS/terminal-notifier"',
+  'app="$HOME/.session-link/$2.app/Contents/MacOS/terminal-notifier"',
   'if [ -x "$app" ]; then',
   '  "$app" -title ai-link -message "$1" >/dev/null 2>&1 &',
   'else',
   `  osascript -e 'on run argv' -e 'display notification (item 1 of argv) with title "ai-link"' -e 'end run' "$1"`,
   'fi',
 ].join('\n')
+// Which agent CLI a worker name belongs to (bridge workers are named agy-<folder>-<id> or codex-<folder>-<id>).
+const cliOfName = (name: string) => (/^agy\b/i.test(name) ? 'agy' : /^codex\b/i.test(name) ? 'codex' : 'claude')
 // An in-app toast plus a macOS notification, so a host in another window still hears about it. The system one is best effort.
-const notify = async ($: any, text: string) => {
+const notify = async ($: any, text: string, cli = 'claude') => {
   $.ui.toast(text)
   try {
-    await $.process.run(['sh', '-c', NOTIFY_SCRIPT, 'sh', text])
+    await $.process.run(['sh', '-c', NOTIFY_SCRIPT, 'sh', text, NOTIFY_APPS[cli] ?? NOTIFY_APPS.claude])
   } catch {
     // the toast already showed
   }
@@ -283,14 +286,28 @@ const notify = async ($: any, text: string) => {
 // A report that says it needs /compact, or an estimated context of CONTEXT_WARN_K or more.
 const CONTEXT_WARN_K = 100
 const needsCompact = (text: string) => /NEEDS COMPACT/i.test(text) || Number(/ctx ~(\d+)k/i.exec(text)?.[1] ?? 0) >= CONTEXT_WARN_K
+// A report that says it failed or is blocked (an upper-case FAILED/BLOCKED, or one that opens with failed/blocked/error).
+const reportFailed = (text: string) => /^\s*(failed|blocked|error)\b/i.test(text) || /\b(FAILED|BLOCKED)\b/.test(text)
+// A turn that ran at least this long gets a "finished" notification, so quick answers stay quiet.
+const TURN_NOTIFY_MS = 30 * 1000
+let turnStartedAt = 0
+const startTurn = async ($: any) => {
+  try {
+    if (!turnStartedAt) turnStartedAt = await $.clock.now()
+  } catch {
+    // a missing clock only means no "finished" notification
+  }
+}
 
 // What the host last saw, so a change is announced once. Null until the first look, so opening the pane announces nothing.
 let knownPeers: Map<string, string> | null = null
+let knownCli: Map<string, { cli: string; name: string }> | null = null
 const warnedStale = new Set<string>()
 async function watchBoard($: any) {
   const who = await getMe($)
   if (!who || !(await isHost($, who))) {
     knownPeers = null
+    knownCli = null
     return
   }
   const now = await $.clock.now()
@@ -300,6 +317,13 @@ async function watchBoard($: any) {
     for (const [id, name] of knownPeers) if (!seen.has(id)) await notify($, `ai-link: ${name} left`)
   }
   knownPeers = seen
+  // Codex and agy windows come from the link-bridge registry; each is announced with its own logo.
+  const cliSeen = new Map((await bridgePeers($, now)).filter(b => b.cli !== 'claude').map(b => [`${b.cli}:${b.name}`, { cli: b.cli, name: b.name }] as const))
+  if (knownCli) {
+    for (const [k, c] of cliSeen) if (!knownCli.has(k)) await notify($, `ai-link: ${c.name} joined`, c.cli)
+    for (const [k, c] of knownCli) if (!cliSeen.has(k)) await notify($, `ai-link: ${c.name} left`, c.cli)
+  }
+  knownCli = cliSeen
   for (const t of (await read($, tasks)) as Task[]) {
     if (isStale(t, now) && !warnedStale.has(t.id)) {
       warnedStale.add(t.id)
@@ -895,6 +919,7 @@ export const register: Register = (on, options) => {
 
   // A prompt the person types ends a worker's quiet spell.
   on('prompt.submit', async ($, e, next) => {
+    await startTurn($)
     // A task a host put in this window's first prompt (spawn with a task) is taken like one received, and keeps the worker silent.
     try {
       const task = TASK_RE.exec(String((e as { text?: string }).text ?? ''))
@@ -959,7 +984,7 @@ export const register: Register = (on, options) => {
             const item: Inbox = { id: task[1], hostId: task[2], hostName: task[3], text: task[4].split('\n\nWhen you are finished')[0] }
             await update($, inbox, l => [...l, item].slice(-30))
             await remember($, { at: now, dir: 'in', who: `task ${item.id}`, text: item.text.slice(0, 300) })
-            $.ui.toast(`Task ${item.id} from ${item.hostName}`)
+            await notify($, `Task ${item.id} from ${item.hostName}`)
             if (options.autoRun === true) {
               void $.prompt
                 .submit({ text: `Task ${item.id} from host "${item.hostName}": ${item.text}\nWhen finished, call ${T_REPORT} with task_id "${item.id}" and a short result.` })
@@ -1019,12 +1044,16 @@ export const register: Register = (on, options) => {
             await $.store.set(`done:${found.toId}`, (((await $.store.get(`done:${found.toId}`)) as number | undefined) ?? 0) + 1)
             await remember($, { at: now, dir: 'in', who: `${result[2]} ✓ ${id} (${Math.round((now - found.at) / 1000)}s)`, text: result[3].slice(0, 300) })
             const open = ((await read($, tasks)) as Task[]).filter(t => t.status === 'sent' && !isStale(t, now))
-            if (needsCompact(result[3])) await notify($, `${result[2]} finished ${id} and needs /compact`)
-            else if (!open.length) await notify($, `${result[2]} finished ${id}: all tasks done`)
+            const cli = cliOfName(result[2])
+            if (reportFailed(result[3])) await notify($, `${result[2]} reported ${id} failed or blocked`, cli)
+            else if (needsCompact(result[3])) await notify($, `${result[2]} finished ${id} and needs /compact`, cli)
+            else if (!open.length) await notify($, `${result[2]} finished ${id}: all tasks done`, cli)
             else $.ui.toast(`${result[2]} finished ${id}`)
           }
         } else {
           await remember($, { at: now, dir: 'in', who: 'peer', text: e.text.slice(0, 300) })
+          const from = /^\[from session "([^"]+)"\]\s*([\s\S]*)/.exec(e.text)
+          if (from) await notify($, `${from[1]}: ${from[2].replace(/\s+/g, ' ').slice(0, 80)}`, cliOfName(from[1]))
         }
       } catch {
         // logging must never block delivery
@@ -1054,6 +1083,7 @@ export const register: Register = (on, options) => {
 
   // Follow the name set with /rename, unless the option fixes one.
   on('classic.UserPromptSubmit', async ($, e, next) => {
+    await startTurn($)
     try {
       const who = await getMe($)
       const t = e.session_title ? String(e.session_title) : ''
@@ -1091,6 +1121,10 @@ export const register: Register = (on, options) => {
       const who = await getMe($)
       if (who) await announce($, who, await $.session.cwd())
       await watchBoard($)
+      const started = turnStartedAt
+      turnStartedAt = 0
+      const took = started ? (await $.clock.now()) - started : 0
+      if (took >= TURN_NOTIFY_MS) await notify($, `${who?.name ?? 'Claude'} finished (${Math.round(took / 1000)}s)`)
     } catch {
       // a failed heartbeat must never affect the turn
     }
