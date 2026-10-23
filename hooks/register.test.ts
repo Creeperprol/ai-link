@@ -1047,7 +1047,7 @@ const notifyRig = async ($: any, on: any, store: Map<string, unknown>) => {
   on('turn.complete', () => ({ text: '' }))
   on('process.run', (_$: any, e: any) => {
     const j = JSON.stringify(e)
-    if (j.includes('display notification')) shown.push(j)
+    if (j.includes('display notification') || j.includes('terminal-notifier')) shown.push(j)
     return { value: { exitCode: 0, stdout: '', stderr: '' } }
   })
   await $.session.start({ source: 'startup', cwd: '/work/me' } as any)

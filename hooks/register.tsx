@@ -262,11 +262,20 @@ const spawnTerminal = async ($: any, dir: string, prompt: string, opts: SpawnOpt
 const PANE_REFRESH_MS = 5000
 let paneTimer: { cancel: () => void } | null = null
 
+// macOS takes a notification's icon from the app that sends it, so the Claude Code icon needs its own copy of terminal-notifier: ~/.session-link/ai-link-notifier.app (made by link-bridge/make-notifier.sh). It can wait for the banner to be dismissed, so it runs in the background. Without it, plain osascript (generic icon).
+const NOTIFY_SCRIPT = [
+  'app="$HOME/.session-link/ai-link-notifier.app/Contents/MacOS/terminal-notifier"',
+  'if [ -x "$app" ]; then',
+  '  "$app" -title ai-link -message "$1" >/dev/null 2>&1 &',
+  'else',
+  `  osascript -e 'on run argv' -e 'display notification (item 1 of argv) with title "ai-link"' -e 'end run' "$1"`,
+  'fi',
+].join('\n')
 // An in-app toast plus a macOS notification, so a host in another window still hears about it. The system one is best effort.
 const notify = async ($: any, text: string) => {
   $.ui.toast(text)
   try {
-    await $.process.run(['osascript', '-e', `display notification ${JSON.stringify(text)} with title "ai-link"`])
+    await $.process.run(['sh', '-c', NOTIFY_SCRIPT, 'sh', text])
   } catch {
     // the toast already showed
   }
