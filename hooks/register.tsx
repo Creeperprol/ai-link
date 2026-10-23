@@ -262,6 +262,43 @@ const spawnTerminal = async ($: any, dir: string, prompt: string, opts: SpawnOpt
 const PANE_REFRESH_MS = 5000
 let paneTimer: { cancel: () => void } | null = null
 
+// An in-app toast plus a macOS notification, so a host in another window still hears about it. The system one is best effort.
+const notify = async ($: any, text: string) => {
+  $.ui.toast(text)
+  try {
+    await $.process.run(['osascript', '-e', `display notification ${JSON.stringify(text)} with title "ai-link"`])
+  } catch {
+    // the toast already showed
+  }
+}
+// A report that says it needs /compact, or an estimated context of CONTEXT_WARN_K or more.
+const CONTEXT_WARN_K = 100
+const needsCompact = (text: string) => /NEEDS COMPACT/i.test(text) || Number(/ctx ~(\d+)k/i.exec(text)?.[1] ?? 0) >= CONTEXT_WARN_K
+
+// What the host last saw, so a change is announced once. Null until the first look, so opening the pane announces nothing.
+let knownPeers: Map<string, string> | null = null
+const warnedStale = new Set<string>()
+async function watchBoard($: any) {
+  const who = await getMe($)
+  if (!who || !(await isHost($, who))) {
+    knownPeers = null
+    return
+  }
+  const now = await $.clock.now()
+  const seen = new Map((await listPeers($, who.id)).map(p => [p.id, p.name] as const))
+  if (knownPeers) {
+    for (const [id, name] of seen) if (!knownPeers.has(id)) await notify($, `ai-link: ${name} joined`)
+    for (const [id, name] of knownPeers) if (!seen.has(id)) await notify($, `ai-link: ${name} left`)
+  }
+  knownPeers = seen
+  for (const t of (await read($, tasks)) as Task[]) {
+    if (isStale(t, now) && !warnedStale.has(t.id)) {
+      warnedStale.add(t.id)
+      await notify($, `Task ${t.id} on ${t.toName || 'its worker'} has had no report for ${STALE_TASK_MS / 60000} min`)
+    }
+  }
+}
+
 const startPaneTimer = ($: any, restart = false) => {
   if (paneTimer && !restart) return
   try {
@@ -269,6 +306,7 @@ const startPaneTimer = ($: any, restart = false) => {
     paneTimer = $.clock.every(PANE_REFRESH_MS, () => {
       try {
         $.ui.invalidate('ui.render')
+        void watchBoard($).catch(() => {})
       } catch {
         // a redraw that fails is retried on the next period
       }
@@ -971,7 +1009,10 @@ export const register: Register = (on, options) => {
             await update($, tasks, l => l.filter(t => t.id !== id)) // finished tasks clear themselves; the result still lands in the log
             await $.store.set(`done:${found.toId}`, (((await $.store.get(`done:${found.toId}`)) as number | undefined) ?? 0) + 1)
             await remember($, { at: now, dir: 'in', who: `${result[2]} ✓ ${id} (${Math.round((now - found.at) / 1000)}s)`, text: result[3].slice(0, 300) })
-            $.ui.toast(/NEEDS COMPACT/i.test(result[3]) ? `${result[2]} finished ${id} and needs /compact` : `${result[2]} finished ${id}`)
+            const open = ((await read($, tasks)) as Task[]).filter(t => t.status === 'sent' && !isStale(t, now))
+            if (needsCompact(result[3])) await notify($, `${result[2]} finished ${id} and needs /compact`)
+            else if (!open.length) await notify($, `${result[2]} finished ${id}: all tasks done`)
+            else $.ui.toast(`${result[2]} finished ${id}`)
           }
         } else {
           await remember($, { at: now, dir: 'in', who: 'peer', text: e.text.slice(0, 300) })
@@ -1040,6 +1081,7 @@ export const register: Register = (on, options) => {
     try {
       const who = await getMe($)
       if (who) await announce($, who, await $.session.cwd())
+      await watchBoard($)
     } catch {
       // a failed heartbeat must never affect the turn
     }

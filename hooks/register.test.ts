@@ -1035,3 +1035,68 @@ test('Claude windows keep their Switch button from the tty they recorded', async
   await ui.press({ key: 'go-claude-bbbb2222-0000' } as any)
   expect(osascript[0]).toContain('/dev/ttys009')
 })
+
+// A host session and a recorder for system notifications; `clock` can be moved by the test.
+const notifyRig = async ($: any, on: any, store: Map<string, unknown>) => {
+  const sent: any[] = []
+  const shown: string[] = []
+  const now = { t: 3600000 }
+  stand((name: string, ...rest: any[]) => (name === 'clock.now' ? undefined : (on as any)(name, ...rest)), sent, store)
+  on('clock.now', () => ({ value: now.t }))
+  on('clock.every', () => ({ value: undefined }))
+  on('turn.complete', () => ({ text: '' }))
+  on('process.run', (_$: any, e: any) => {
+    const j = JSON.stringify(e)
+    if (j.includes('display notification')) shown.push(j)
+    return { value: { exitCode: 0, stdout: '', stderr: '' } }
+  })
+  await $.session.start({ source: 'startup', cwd: '/work/me' } as any)
+  await run($, 'host', '')
+  return { sent, shown, now }
+}
+const taskIds = (sent: any[]) => sent.map(m => /\[TASK (\S+) /.exec(String(m.text))?.[1]).filter(Boolean) as string[]
+const tick = ($: any) => $.turn.complete({ answer: '' } as any)
+
+test('a report that needs compact sends a system notification', async ($, on) => {
+  const { sent, shown } = await notifyRig($, on, new Map<string, unknown>(Object.entries(OTHER_PEER)))
+  await run($, 'assign', 'other first job')
+  await $.session.receive({ origin: { kind: 'peer' }, text: `[RESULT ${taskIds(sent)[0]} from="other-bbbb"]\nok ctx ~120k` } as any)
+  expect(shown.some(s => s.includes('needs /compact'))).toBe(true)
+})
+
+test('finishing the last open task says all tasks done, finishing an earlier one does not', async ($, on) => {
+  const { sent, shown } = await notifyRig($, on, new Map<string, unknown>(Object.entries(OTHER_PEER)))
+  await run($, 'assign', 'other first job')
+  await run($, 'assign', 'other second job')
+  const [a, b] = taskIds(sent)
+  await $.session.receive({ origin: { kind: 'peer' }, text: `[RESULT ${a} from="other-bbbb"]\nok` } as any)
+  expect(shown).toHaveLength(0)
+  await $.session.receive({ origin: { kind: 'peer' }, text: `[RESULT ${b} from="other-bbbb"]\nok` } as any)
+  expect(shown.some(s => s.includes('all tasks done'))).toBe(true)
+})
+
+test('the host hears when a worker joins or leaves, but not on the first look', async ($, on) => {
+  const store = new Map<string, unknown>()
+  const { shown } = await notifyRig($, on, store)
+  await tick($)
+  expect(shown).toHaveLength(0)
+  store.set('peer:bbbb2222-0000', OTHER)
+  await tick($)
+  expect(shown.filter(s => s.includes('other-bbbb joined'))).toHaveLength(1)
+  await tick($)
+  expect(shown).toHaveLength(1) // not announced twice
+  store.delete('peer:bbbb2222-0000')
+  await tick($)
+  expect(shown.some(s => s.includes('other-bbbb left'))).toBe(true)
+})
+
+test('a task with no report for 15 minutes is warned about once', async ($, on) => {
+  const { shown, now } = await notifyRig($, on, new Map<string, unknown>(Object.entries(OTHER_PEER)))
+  await run($, 'assign', 'other first job')
+  await tick($)
+  expect(shown.filter(s => s.includes('no report'))).toHaveLength(0)
+  now.t += 15 * 60 * 1000
+  await tick($)
+  await tick($)
+  expect(shown.filter(s => s.includes('no report'))).toHaveLength(1)
+})
