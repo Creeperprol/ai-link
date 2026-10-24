@@ -127,7 +127,7 @@ const box = dir('inbox', me.id)
 for (;;) {
   const peer = readJson(dir('peers', `${me.id}.json`))
   if (!peer || !alive(peer.pid)) process.exit(0) // the session ended
-  const typeable = !!(peer.tty || peer.pane)
+  const typeable = !!(peer.tty || peer.pane || peer.wcon)
   const out = []
   for (const f of fs.existsSync(box) ? fs.readdirSync(box).sort() : []) {
     if (!f.endsWith('.json')) continue

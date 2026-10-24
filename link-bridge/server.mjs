@@ -8,7 +8,7 @@ import os from 'node:os'
 import path from 'node:path'
 import crypto from 'node:crypto'
 import { execFile, execFileSync } from 'node:child_process'
-import { ancestors } from './proc.mjs'
+import { ancestorInfo } from './proc.mjs'
 
 const HOME = process.env.LINK_HOME || path.join(os.homedir(), '.session-link')
 const CLI = process.env.LINK_CLI || 'agent'
@@ -66,8 +66,10 @@ const alive = pid => {
 
 // ---------- presence ----------
 // chain: this server's parent processes, so listen.mjs (a Claude Code hook) can find the session of its own window.
+// wcon (Windows): the claude process whose console input a message is typed into.
 let myChain = []
-const beat = () => writeJson(dir('peers', `${ID}.json`), { id: ID, name: myName, cli: CLI, cwd: CWD, pid: process.pid, chain: myChain, tty: myTty, pane: PANE, seen: Date.now() })
+let myWcon = 0
+const beat = () => writeJson(dir('peers', `${ID}.json`), { id: ID, name: myName, cli: CLI, cwd: CWD, pid: process.pid, chain: myChain, tty: myTty, pane: PANE, wcon: myWcon, seen: Date.now() })
 
 const peers = ({ includeSelf = false } = {}) => {
   const out = []
@@ -136,12 +138,56 @@ const OSA = `on run argv
   end tell
   return "nomatch"
 end run`
-// Returns true when the text was typed into the target's prompt (tmux pane or macOS Terminal tab).
+// Windows: attach to the target claude process's console and write the line, then Enter, as key presses
+// (WriteConsoleInput). Works in Windows Terminal, PowerShell and cmd windows, needs no focus, and goes to
+// exactly that process, not to whichever window or tab is in front.
+const WIN_TYPE = `
+Add-Type -TypeDefinition @'
+using System; using System.Runtime.InteropServices; using System.Threading;
+public static class LinkType {
+  [StructLayout(LayoutKind.Explicit, CharSet = CharSet.Unicode)] public struct KEY {
+    [FieldOffset(0)] public int Down; [FieldOffset(4)] public short Repeat; [FieldOffset(6)] public short Vk;
+    [FieldOffset(8)] public short Scan; [FieldOffset(10)] public char Ch; [FieldOffset(12)] public int State; }
+  [StructLayout(LayoutKind.Explicit)] public struct REC { [FieldOffset(0)] public short Type; [FieldOffset(4)] public KEY Key; }
+  [DllImport("kernel32.dll")] static extern bool FreeConsole();
+  [DllImport("kernel32.dll", SetLastError = true)] static extern bool AttachConsole(uint pid);
+  [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)] static extern IntPtr CreateFileW(string n, uint a, uint s, IntPtr sa, uint d, uint f, IntPtr t);
+  [DllImport("kernel32.dll", SetLastError = true)] static extern bool WriteConsoleInputW(IntPtr h, REC[] r, uint n, out uint w);
+  [DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr h);
+  static bool Put(IntPtr h, string s, short vk) {
+    var r = new REC[s.Length * 2];
+    for (int i = 0; i < s.Length; i++) for (int d = 0; d < 2; d++) {
+      r[i * 2 + d].Type = 1; r[i * 2 + d].Key.Down = d == 0 ? 1 : 0; r[i * 2 + d].Key.Repeat = 1;
+      r[i * 2 + d].Key.Vk = vk; r[i * 2 + d].Key.Ch = s[i]; }
+    uint w; return WriteConsoleInputW(h, r, (uint)r.Length, out w) && w == r.Length;
+  }
+  public static string Send(uint pid, string text, int gap) {
+    FreeConsole();
+    if (!AttachConsole(pid)) return "noattach " + Marshal.GetLastWin32Error();
+    IntPtr h = CreateFileW("CONIN$", 0xC0000000, 3, IntPtr.Zero, 3, 0, IntPtr.Zero);
+    if (h == new IntPtr(-1)) { FreeConsole(); return "noconin"; }
+    bool ok = Put(h, text, 0);
+    Thread.Sleep(gap);
+    ok = ok && Put(h, "\\r", 0x0D);
+    CloseHandle(h); FreeConsole();
+    return ok ? "ok" : "nowrite";
+  }
+}
+'@
+[LinkType]::Send([uint32]$env:LINK_T_PID, [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($env:LINK_T_TEXT)), [int]$env:LINK_T_GAP)
+`
+const winType = (pid, line) =>
+  new Promise(resolve =>
+    execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', WIN_TYPE], { timeout: 30_000, windowsHide: true, env: { ...process.env, LINK_T_PID: String(pid), LINK_T_TEXT: Buffer.from(line).toString('base64'), LINK_T_GAP: String(WAKE_GAP_MS) } }, (err, out) => resolve(!err && String(out).trim() === 'ok')),
+  )
+
+// Returns true when the text was typed into the target's prompt (tmux pane, macOS Terminal tab or Windows console).
 const typeInto = async (peer, line) => {
   if (WAKE_LOG) {
-    fs.appendFileSync(WAKE_LOG, JSON.stringify({ to: peer.name, tty: peer.tty, pane: peer.pane, line }) + '\n')
+    fs.appendFileSync(WAKE_LOG, JSON.stringify({ to: peer.name, tty: peer.tty, pane: peer.pane, wcon: peer.wcon, line }) + '\n')
     return true
   }
+  if (peer.wcon && process.platform === 'win32') return winType(peer.wcon, line)
   if (peer.pane) {
     const a = await run('tmux', ['send-keys', '-t', peer.pane, '-l', '--', line])
     if (a === '') {
@@ -158,7 +204,7 @@ const chains = new Map() // one delivery at a time per target so two messages ne
 const wake = (to, msg, file) => {
   if (!WAKE) return
   const peer = readJson(dir('peers', `${to}.json`))
-  if (!peer || (!peer.pane && !peer.tty) || (peer.tty && peer.tty === myTty && !peer.pane)) return
+  if (!peer || (!peer.pane && !peer.tty && !peer.wcon) || (peer.tty && peer.tty === myTty && !peer.pane)) return
   const prev = chains.get(to) || Promise.resolve()
   const next = prev
     .then(async () => {
@@ -221,8 +267,8 @@ const takeLan = () => {
       if (tasks.some(x => x.id === m.taskId)) writeJson(tasksFile(ID), tasks.map(x => (x.id === m.taskId ? { ...x, status: 'done', result: String(m.text).slice(0, 2000) } : x)))
     }
     if (!WAKE) continue
-    const me = { name: myName, tty: myTty, pane: PANE }
-    if (!me.tty && !me.pane) continue
+    const me = { name: myName, tty: myTty, pane: PANE, wcon: myWcon }
+    if (!me.tty && !me.pane && !me.wcon) continue
     lanChain.p = lanChain.p.then(async () => {
       if (await typeInto(me, typed(m))) fs.rmSync(file, { force: true })
     }).catch(() => {})
@@ -424,8 +470,13 @@ process.on('SIGINT', bye)
 process.on('SIGTERM', bye)
 
 beat()
-ancestors(process.pid).then(c => {
-  myChain = c
+ancestorInfo(process.pid).then(c => {
+  myChain = c.map(x => x.pid)
+  if (process.platform === 'win32' && WAKE) {
+    // The window's claude process (native claude.exe, or node running Claude Code), not a cmd.exe in between.
+    const pick = c.find(x => /^claude(\.exe)?$/i.test(x.name)) || c.find(x => /^node(\.exe)?$/i.test(x.name))
+    myWcon = Number(process.env.LINK_WCON) || pick?.pid || 0
+  }
   beat()
 }).catch(() => {})
 setInterval(() => {
