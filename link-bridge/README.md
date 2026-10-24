@@ -57,6 +57,8 @@ node lan.mjs join <key>     # every other machine: saves the same key
 node lan.mjs                # every machine: run it and leave it open
 ```
 
+Setting up the second computer by hand is optional: paste the prompt in [`LAN-PROMPT.md`](LAN-PROMPT.md) into Claude Code there and it installs and starts everything.
+
 Sessions on the other machine then show up in `link_peers` as `name [cli] folder on <machine>`, and `link_tell`, `link_tellall`, `link_assign`, `link_report` and `link_rename` work across machines. A message from another machine is typed into the target session's own window like a local one, tagged with the sender's machine (`[link MESSAGE from "boss@Pauls-MacBook-Air"] ...`). Each machine keeps its own host: a host can hand tasks to workers on other machines, and the result marks the task done on its board.
 
 - **How it works.** Every 3 s each machine broadcasts its live sessions over UDP (port 47811). Messages for a session on another machine are carried over HTTP (port 47812) and dropped into that session's inbox. The MCP server itself still never touches the network.
