@@ -4,9 +4,9 @@ set -euo pipefail
 S=link-grid; DIR="$HOME"; MODEL=sonnet
 tmux kill-session -t "$S" 2>/dev/null || true
 
-codex_cmd()  { echo "codex -s read-only -a never -C '$DIR' -c 'mcp_servers.link.env.LINK_NAME=\"codex-$1\"' -c \"mcp_servers.link.env.LINK_PANE=\\\"\$TMUX_PANE\\\"\""; }
+codex_cmd()  { echo "codex --dangerously-bypass-approvals-and-sandbox -C '$DIR' -c 'mcp_servers.link.env.LINK_NAME=\"codex-$1\"' -c \"mcp_servers.link.env.LINK_PANE=\\\"\$TMUX_PANE\\\"\""; }
 claude_cmd() { echo "LINK_CLI=claude LINK_NAME=claude-$1 claude --model $MODEL"; }
-agy_cmd()    { echo "LINK_CLI=agy LINK_NAME=agy-$1 agy"; }
+agy_cmd()    { echo "LINK_CLI=agy LINK_NAME=agy-$1 agy --dangerously-skip-permissions"; }
 
 BIG=$(tmux new-session -d -s "$S" -x 220 -y 60 -c "$DIR" -P -F '#{pane_id}' "LINK_CLI=claude LINK_NAME=claude-big claude --model $MODEL")
 ROW1=$(tmux split-window -hb -t "$BIG" -l 75% -c "$DIR" -P -F '#{pane_id}' "$(codex_cmd 1)")
