@@ -58,7 +58,7 @@ claude mcp add link --scope user -e LINK_CLI=claude -- node /path/to/ai-link/lin
 agy mcp add --env LINK_CLI=agy link "$(command -v node)" /path/to/ai-link/link-bridge/server.mjs
 ```
 
-See [`link-bridge/README.md`](link-bridge/README.md) for the tools, the Antigravity and Codex notes (permissions, folder trust, quota) and the helpers `agy-worker.sh`, `agy-image.sh`, `codex-agent.sh`, `link-grid.sh` (up to 8 workers in one tmux window) and `big-grid.sh`. Its tests: `node --test link-bridge/test.mjs`.
+See [`link-bridge/README.md`](link-bridge/README.md) for the tools, the Antigravity and Codex notes (permissions, folder trust, quota) and the helpers `agy-worker.sh`, `agy-image.sh`, `codex-agent.sh`, `link-grid.sh` (up to 8 workers in one tmux window), `big-grid.sh`, and `lan.mjs`, which links the sessions of two or more machines on the same Wi-Fi. Its tests: `node --test link-bridge/test.mjs`.
 
 ## Upgrading from `session-link`
 
