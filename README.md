@@ -51,7 +51,7 @@ It runs every `*.test.ts` and `*.test.tsx` in the folder, each file in its own c
 
 ## link-bridge (the cross-CLI half)
 
-[`link-bridge/`](link-bridge/) is a dependency-free MCP server (Node 18+) that lets Claude Code, Codex, Qwen Code and the Antigravity CLI (`agy`) find each other, message each other and hand out work, plus one-shot helpers for using `agy` and Codex as agents. It does not need this plugin and this plugin does not need it; they keep separate registries. The bridge also pushes: it types each message, task or result into the target's tmux pane or Terminal.app tab, and keeps it in `link_inbox` when it cannot.
+[`link-bridge/`](link-bridge/) is a dependency-free MCP server (Node 18+) that lets Claude Code, Codex, Qwen Code and the Antigravity CLI (`agy`) find each other, message each other and hand out work, plus one-shot helpers for using `agy` and Codex as agents. It does not need this plugin and this plugin does not need it; they keep separate registries. The bridge also pushes: it types each message, task or result into the target's tmux pane or Terminal.app tab, and keeps it in `link_inbox` when it cannot. Inside tmux, `link_peers` also lists AI sessions in other panes of the same window that have not joined yet.
 
 ```
 claude mcp add link --scope user -e LINK_CLI=claude -- node /path/to/ai-link/link-bridge/server.mjs
