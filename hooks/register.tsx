@@ -78,6 +78,13 @@ let myTty: string | undefined
 async function ttyOf($: any): Promise<string | undefined> {
   if (myTty !== undefined) return myTty || undefined
   try {
+    if (await isWindows($)) {
+      // No tty on Windows: the address is win:<pid>, the nearest ancestor process that owns a window (Windows Terminal, conhost).
+      const w = await $.process.run(['powershell', '-NoProfile', '-NonInteractive', '-Command', WIN_OWNER_PS])
+      const t = String(w.stdout).trim()
+      myTty = /^\d+$/.test(t) ? `win:${t}` : ''
+      return myTty || undefined
+    }
     const r = await $.process.run(['sh', '-c', 'ps -o tty= -p $PPID'])
     const t = r.stdout.trim()
     myTty = /^ttys\d+$/.test(t) ? t : ''
@@ -87,9 +94,19 @@ async function ttyOf($: any): Promise<string | undefined> {
   return myTty || undefined
 }
 
-// Selects the Terminal.app tab on that tty and raises its window.
+// Walks up from this process to the first ancestor that owns a window.
+const WIN_OWNER_PS = '$i = $PID; for ($n = 0; $n -lt 12; $n++) { $c = Get-CimInstance Win32_Process -Filter "ProcessId=$i" -ErrorAction SilentlyContinue; if (-not $c -or -not $c.ParentProcessId) { break }; $i = $c.ParentProcessId; $p = Get-Process -Id $i -ErrorAction SilentlyContinue; if ($p -and $p.MainWindowHandle -ne 0) { $i; break } }'
+
+// Selects the Terminal.app tab on that tty and raises its window (on Windows, brings the window owned by win:<pid> forward).
 async function focusTty($: any, tty: string | undefined): Promise<string | null> {
-  if (await isWindows($)) return 'Switch to is not available on Windows yet; use the window itself'
+  if (tty && /^win:\d+$/.test(tty)) {
+    try {
+      const r = await $.process.run(['powershell', '-NoProfile', '-NonInteractive', '-Command', `(New-Object -ComObject WScript.Shell).AppActivate(${Number(tty.slice(4))})`])
+      return /true/i.test(String(r.stdout)) ? null : 'no window found for it (it may have closed)'
+    } catch (err) {
+      return String(err)
+    }
+  }
   if (!tty || !/^ttys\d+$/.test(tty)) return 'that session has no known Terminal window'
   const script = `tell application "Terminal"
 repeat with w in windows
@@ -249,9 +266,32 @@ const b64 = (t: string) => {
 }
 // lean (default): no MCP servers and no skill/command listings in the worker, which cuts its per-call context.
 type SpawnOpts = { model?: string; window?: number; raw?: boolean; lean?: boolean }
+// Windows version of the trust check: PowerShell resolves the folder and lists the trusted projects from ~/.claude.json. Paths compare lower-case with forward slashes.
+async function untrustedWindows($: any, dir: string): Promise<string | null> {
+  try {
+    const script = `$d = Resolve-Path -LiteralPath ${psq(dir)} -ErrorAction SilentlyContinue; if (-not $d) { "MISSING"; exit }; $d.ProviderPath; "---"; $f = Join-Path $HOME ".claude.json"; if (Test-Path $f) { $j = Get-Content -Raw $f | ConvertFrom-Json; foreach ($n in $j.projects.PSObject.Properties) { if ($n.Value.hasTrustDialogAccepted -eq $true) { $n.Name } } }`
+    const r = await $.process.run(['powershell', '-NoProfile', '-NonInteractive', '-Command', script])
+    const out = String(r.stdout).split(/\r?\n/).map((l: string) => l.trim()).filter(Boolean)
+    if (out[0] === 'MISSING') return `the folder ${dir} does not exist`
+    const norm = (p: string) => p.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase()
+    const phys = out[0]
+    if (!phys) return null
+    const trusted = out.slice(out.indexOf('---') + 1).map(norm)
+    let cur = norm(phys)
+    for (;;) {
+      if (trusted.includes(cur)) return null
+      const up = cur.replace(/\/[^/]*$/, '')
+      if (!up || up === cur) break
+      cur = up
+    }
+    return `Claude Code does not trust "${phys}" yet, so a worker window there would stop at a "Do you trust this folder?" prompt and never start. Spawn inside a folder you already trust, or open claude there once yourself and accept the prompt.`
+  } catch {
+    return null
+  }
+}
 // A worker window in a folder Claude Code does not trust yet stops at "Do you trust this folder?" and never starts. Trust is read from ~/.claude.json (a trusted folder covers everything under it). Read only: the mod never decides trust for the person. Anything unclear lets the spawn go ahead.
 async function untrustedReason($: any, dir: string): Promise<string | null> {
-  if (await isWindows($)) return null // no sh on Windows: the trust check is skipped there
+  if (await isWindows($)) return untrustedWindows($, dir)
   try {
     const pwd = await $.process.run(['sh', '-c', 'cd "$1" 2>/dev/null && pwd -P', '_', dir])
     if (pwd.exitCode !== 0) return `the folder ${dir} does not exist`
