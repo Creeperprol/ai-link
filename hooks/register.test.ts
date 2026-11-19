@@ -1221,3 +1221,43 @@ test('on Windows a worker opens in a PowerShell window, with no sh or osascript'
   expect(all).not.toContain('osascript')
   expect(all).not.toContain('pwd -P')
 })
+
+const standWindows = (on: any, psOut: (j: string) => string, calls: string[]) => {
+  stand(on, [], new Map())
+  on('process.run', (_$: any, e: any) => {
+    const j = JSON.stringify(e)
+    calls.push(j)
+    if (j.includes('"ver"')) return { value: { exitCode: 0, stdout: 'Microsoft Windows [Version 10.0]', stderr: '' } }
+    return { value: { exitCode: 0, stdout: psOut(j), stderr: '' } }
+  })
+}
+
+test('on Windows a folder under a trusted folder is allowed', async ($, on) => {
+  const calls: string[] = []
+  standWindows(on, j => (j.includes('Resolve-Path') ? 'C:\\Work\\proj\\sub\n---\nC:/work/proj\n' : ''), calls)
+  await $.session.start({ source: 'startup', cwd: 'C:\\Work' } as any)
+  await run($, 'host', '')
+  expect(JSON.stringify(await spawnTask($, 'C:\\Work\\proj\\sub'))).toContain('already working')
+})
+
+test('on Windows an untrusted folder is refused', async ($, on) => {
+  const calls: string[] = []
+  standWindows(on, j => (j.includes('Resolve-Path') ? 'C:\\Other\\x\n---\nC:/work/proj\n' : ''), calls)
+  await $.session.start({ source: 'startup', cwd: 'C:\\Work' } as any)
+  await run($, 'host', '')
+  const r = JSON.stringify(await spawnTask($, 'C:\\Other\\x'))
+  expect(r).toContain('does not trust')
+  expect(calls.join('')).not.toContain('Start-Process powershell')
+})
+
+test('on Windows a session records win:<pid> as its address', async ($, on) => {
+  const store = new Map<string, unknown>()
+  stand(on, [], store)
+  on('process.run', (_$: any, e: any) => {
+    const j = JSON.stringify(e)
+    if (j.includes('"ver"')) return { value: { exitCode: 0, stdout: 'Microsoft Windows [Version 10.0]', stderr: '' } }
+    return { value: { exitCode: 0, stdout: j.includes('Win32_Process') ? '4242\n' : '', stderr: '' } }
+  })
+  await $.session.start({ source: 'startup', cwd: 'C:\\Work' } as any)
+  expect(store.get('peer:aaaa1111-0000')).toMatchObject({ tty: 'win:4242' })
+})
