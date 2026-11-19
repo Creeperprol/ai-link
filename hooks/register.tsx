@@ -193,6 +193,31 @@ async function takeHandoff($: any, cwd: string): Promise<{ name: string; host: b
 
 // Turns host mode on or off; shared by the /host command and the pane (a plugin's own
 // $.command.run does not reach its own hooks).
+// The skill is bundled in this plugin (skills/multi-window), so it loads as `ai-link:multi-window`; a copy in ~/.claude/skills loads as plain `multi-window`.
+async function multiWindowHook($: any, e: any, next: any) {
+  const r = await next(e)
+  let note = ''
+  try {
+    const who = await getMe($)
+    if (!who) return r
+    const live = String(await $.session.id())
+    const rec = await hostRecord($)
+    const hostAlive = !!rec && rec.id !== live && (await listPeers($, live)).some(p => p.id === rec.id)
+    const holdsTask = (await read($, inbox)).length > 0
+    if (holdsTask) {
+      note = 'ai-link: this session holds a task from a host, so it is a WORKER: follow the worker rules above and do not delegate.'
+    } else if (hostAlive) {
+      note = `ai-link: another running session ("${rec!.name}") is the host, so this session did not take the host role. Delegation tools will refuse here; tell the person to run /host in this window if they want it to be the host.`
+    } else {
+      if (!rec || rec.id !== live) await setHost($, who, true)
+      note = 'ai-link is ON and this session is now the HOST (set automatically by this skill). Before delegating, load the tools with ToolSearch: select:mcp__ai-link__peers,mcp__ai-link__spawn,mcp__ai-link__assign,mcp__ai-link__rename,mcp__ai-link__command. Delegate with spawn / assign by default (set `difficulty` and, if the person gave a number, `limit`); use the Agent tool only where the playbook says it is better. Address workers by the exact names `peers` lists; never use "all" or "auto" unless the person asked.'
+    }
+  } catch {
+    return r
+  }
+  return { ...r, text: `${r.text}\n\n---\n${note}` }
+}
+
 async function setHost($: any, who: Me, isOn: boolean) {
   const live = String(await $.session.id())
   const mine: Me = { id: live, name: who.name }
@@ -947,29 +972,8 @@ export const register: Register = (on, options) => {
   })
 
   // Loading the multi-window skill turns ai-link on: this session becomes the host and the model is told which tools to load. It never takes over from a worker that holds a task or from a host that is still running.
-  on('skill.prompt', { skill: 'multi-window' }, async ($, e, next) => {
-    const r = await next(e)
-    let note = ''
-    try {
-      const who = await getMe($)
-      if (!who) return r
-      const live = String(await $.session.id())
-      const rec = await hostRecord($)
-      const hostAlive = !!rec && rec.id !== live && (await listPeers($, live)).some(p => p.id === rec.id)
-      const holdsTask = (await read($, inbox)).length > 0
-      if (holdsTask) {
-        note = 'ai-link: this session holds a task from a host, so it is a WORKER: follow the worker rules above and do not delegate.'
-      } else if (hostAlive) {
-        note = `ai-link: another running session ("${rec!.name}") is the host, so this session did not take the host role. Delegation tools will refuse here; tell the person to run /host in this window if they want it to be the host.`
-      } else {
-        if (!rec || rec.id !== live) await setHost($, who, true)
-        note = 'ai-link is ON and this session is now the HOST (set automatically by this skill). Before delegating, load the tools with ToolSearch: select:mcp__ai-link__peers,mcp__ai-link__spawn,mcp__ai-link__assign,mcp__ai-link__rename,mcp__ai-link__command. Delegate with spawn / assign by default (set `difficulty` and, if the person gave a number, `limit`); use the Agent tool only where the playbook says it is better. Address workers by the exact names `peers` lists; never use "all" or "auto" unless the person asked.'
-      }
-    } catch {
-      return r
-    }
-    return { ...r, text: `${r.text}\n\n---\n${note}` }
-  })
+  on('skill.prompt', { skill: 'multi-window' }, multiWindowHook)
+  on('skill.prompt', { skill: 'ai-link:multi-window' }, multiWindowHook)
 
   // Record what other sessions say to this one; the model still reads it as usual.
   on('session.receive', async ($, e, next) => {

@@ -778,6 +778,16 @@ test('loading the multi-window skill makes a free session the host and names the
   expect(store.get('host')).toMatchObject({ id: 'aaaa1111-0000' })
 })
 
+test('the bundled skill (ai-link:multi-window) also makes a free session the host', async ($, on) => {
+  const store = new Map<string, unknown>()
+  stand(on, [], store)
+  on('skill.prompt', (_$: any, e: any) => ({ text: e.text }))
+  await $.session.start({ source: 'startup', cwd: '/work/me' } as any)
+  const r = JSON.stringify(await skillRun($, 'ai-link:multi-window'))
+  expect(r).toContain('now the HOST')
+  expect(store.get('host')).toMatchObject({ id: 'aaaa1111-0000' })
+})
+
 test('a host record whose session is gone is replaced when the skill loads', async ($, on) => {
   const store = new Map<string, unknown>([['host', { id: 'dead0000', name: 'gone' }]]) // no peer record: that session ended
   stand(on, [], store)
