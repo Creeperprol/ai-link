@@ -89,6 +89,7 @@ async function ttyOf($: any): Promise<string | undefined> {
 
 // Selects the Terminal.app tab on that tty and raises its window.
 async function focusTty($: any, tty: string | undefined): Promise<string | null> {
+  if (await isWindows($)) return 'Switch to is not available on Windows yet; use the window itself'
   if (!tty || !/^ttys\d+$/.test(tty)) return 'that session has no known Terminal window'
   const script = `tell application "Terminal"
 repeat with w in windows
@@ -236,7 +237,7 @@ async function setHost($: any, who: Me, isOn: boolean) {
 // Names are plain text: drop any markup, such as the closing tag of the message envelope.
 const cleanName = (raw: string) => raw.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 60)
 
-// Opens a macOS Terminal window running `claude` in dir, optionally with a first prompt.
+// Opens a macOS Terminal window (or a PowerShell window on Windows) running `claude` in dir, optionally with a first prompt.
 const shq = (v: string) => `'${v.replace(/'/g, `'\\''`)}'`
 // A worker window stays small and cheap: its own auto-compact window, and optionally a cheaper model.
 const WORKER_WINDOW = 100000
@@ -250,6 +251,7 @@ const b64 = (t: string) => {
 type SpawnOpts = { model?: string; window?: number; raw?: boolean; lean?: boolean }
 // A worker window in a folder Claude Code does not trust yet stops at "Do you trust this folder?" and never starts. Trust is read from ~/.claude.json (a trusted folder covers everything under it). Read only: the mod never decides trust for the person. Anything unclear lets the spawn go ahead.
 async function untrustedReason($: any, dir: string): Promise<string | null> {
+  if (await isWindows($)) return null // no sh on Windows: the trust check is skipped there
   try {
     const pwd = await $.process.run(['sh', '-c', 'cd "$1" 2>/dev/null && pwd -P', '_', dir])
     if (pwd.exitCode !== 0) return `the folder ${dir} does not exist`
@@ -269,6 +271,36 @@ async function untrustedReason($: any, dir: string): Promise<string | null> {
     return null
   }
 }
+// Windows has `cmd` and no `sh`/`osascript`; macOS and Linux have no `cmd`.
+async function isWindows($: any): Promise<boolean> {
+  try {
+    const r = await $.process.run(['cmd', '/c', 'ver'])
+    return r.exitCode === 0 && /windows/i.test(String(r.stdout))
+  } catch {
+    return false
+  }
+}
+const psq = (v: string) => `'${v.replace(/'/g, "''")}'`
+// PowerShell's -EncodedCommand takes base64 of UTF-16LE text.
+const b64utf16 = (t: string) => {
+  let bin = ''
+  for (let i = 0; i < t.length; i++) bin += String.fromCharCode(t.charCodeAt(i) & 255, t.charCodeAt(i) >> 8)
+  return btoa(bin)
+}
+// Opens a new PowerShell window (Windows Terminal is not needed) running `claude` in dir. The task travels as base64, so newlines and quotes survive.
+async function spawnWindows($: any, dir: string, prompt: string, win: number, opts: SpawnOpts): Promise<string | null> {
+  const flags = `${opts.lean === false ? '' : ' --strict-mcp-config --disable-slash-commands'}${opts.model ? ' --model ' + opts.model : ''}`
+  const task = prompt ? ` $t` : ''
+  const inner = [
+    `Set-Location -LiteralPath ${psq(dir)}`,
+    `$env:CLAUDE_CODE_AUTO_COMPACT_WINDOW='${win}'`,
+    prompt ? `$t=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${b64(prompt)}'))` : '',
+    `claude${flags}${task}`,
+  ].filter(Boolean).join('; ')
+  const outer = `Start-Process powershell -ArgumentList '-NoExit','-NoProfile','-EncodedCommand','${b64utf16(inner)}'`
+  const r = await $.process.run(['powershell', '-NoProfile', '-Command', outer])
+  return r.exitCode === 0 ? null : String(r.stderr).trim() || `powershell exited ${r.exitCode}`
+}
 const spawnTerminal = async ($: any, dir: string, prompt: string, opts: SpawnOpts = {}): Promise<string | null> => {
   const untrusted = await untrustedReason($, dir)
   if (untrusted) return untrusted
@@ -277,8 +309,9 @@ const spawnTerminal = async ($: any, dir: string, prompt: string, opts: SpawnOpt
   // A task is passed as base64 so its newlines and quotes survive the terminal; a plain prompt is quoted.
   const arg = !prompt ? '' : opts.raw ? ` "$(echo ${b64(prompt)} | base64 -d)"` : ' ' + shq(prompt)
   const cmd = `cd ${shq(dir)} && CLAUDE_CODE_AUTO_COMPACT_WINDOW=${win} claude${opts.lean === false ? '' : ' --strict-mcp-config --disable-slash-commands'}${opts.model ? ' --model ' + opts.model : ''}${arg}`
-  const script = `tell application "Terminal"\nactivate\ndo script "${cmd.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"\nend tell`
   try {
+    if (await isWindows($)) return await spawnWindows($, dir, prompt, win, opts)
+    const script = `tell application "Terminal"\nactivate\ndo script "${cmd.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"\nend tell`
     const r = await $.process.run(['osascript', '-e', script])
     return r.exitCode === 0 ? null : r.stderr.trim() || `osascript exited ${r.exitCode}`
   } catch (err) {

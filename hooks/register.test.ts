@@ -1202,3 +1202,22 @@ test('a name saved for the session is kept over the new default', async ($, on) 
   await $.session.start({ source: 'startup', cwd: '/Users/paul' } as any)
   expect(store.get('peer:aaaa1111-0000')).toMatchObject({ name: 'worker-2' })
 })
+
+test('on Windows a worker opens in a PowerShell window, with no sh or osascript', async ($, on) => {
+  const calls: string[][] = []
+  stand(on, [], new Map())
+  on('process.run', (_$: any, e: any) => {
+    calls.push(e.command ?? e.argv ?? e.args ?? [])
+    const j = JSON.stringify(e)
+    if (j.includes('"ver"')) return { value: { exitCode: 0, stdout: 'Microsoft Windows [Version 10.0.26100]', stderr: '' } }
+    return { value: { exitCode: 0, stdout: '', stderr: '' } }
+  })
+  await $.session.start({ source: 'startup', cwd: 'C:\\work\\me' } as any)
+  await run($, 'host', '')
+  const r = JSON.stringify(await spawnTask($, 'C:\\work\\me'))
+  expect(r).toContain('already working')
+  const all = JSON.stringify(calls)
+  expect(all).toContain('Start-Process powershell')
+  expect(all).not.toContain('osascript')
+  expect(all).not.toContain('pwd -P')
+})

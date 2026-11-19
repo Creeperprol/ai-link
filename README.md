@@ -15,7 +15,7 @@
 
 Pair it with [session-usage](https://github.com/Creeperprol/session-usage) for the usage side pane.
 
-macOS and Terminal.app only for `/spawn` and Switch. Load it as a Claude Code mod from this folder.
+`/spawn` opens a Terminal.app window on macOS and a PowerShell window on Windows (the folder-trust pre-check is skipped there); Switch is macOS Terminal.app only. Load it as a Claude Code mod from this folder.
 
 ## Commands and tools
 
