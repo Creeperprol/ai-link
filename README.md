@@ -3,6 +3,7 @@
 *(plugin id: `ai-link`)* A Claude Code plugin that links several Claude Code sessions on one machine. For other CLIs (Codex, Qwen, Antigravity) use the [`link-bridge/`](link-bridge/) MCP server in this repo, which is the other half of AI Link. One-shot helpers there let Claude use Antigravity (`agy-worker.sh`) and Codex (`codex-agent.sh`) as agents; they always open a visible window, never run headless.
 
 - `/sessions`, `/tell <name> <msg>`, `/tellall <msg>`: list and message other sessions
+- The `share` skill (open Claude/agy/Codex workers and share tasks across them) is bundled too and installable into agy and Codex with `link-bridge/install-skill.sh share`.
 - The `multi-window` skill is bundled (`skills/multi-window`, loads as `ai-link:multi-window`). Loading it makes the session the host automatically (a `skill.prompt` hook), unless it is a worker holding a task or another host is still running
 - `/host`: make a session the host; `/assign <name|auto|all> <task>` hands out work (`auto` picks the least-loaded worker), results come back to `/board`
 - The host's model is told how to run workers (contract first, even sizing, verify reports); a worker holding a task works silently and reports with its context size
