@@ -332,12 +332,13 @@ async function spawnWindows($: any, dir: string, prompt: string, win: number, op
   const flags = `${opts.lean === false ? '' : ' --strict-mcp-config --disable-slash-commands'}${opts.model ? ' --model ' + opts.model : ''}`
   const task = prompt ? ` $t` : ''
   const inner = [
+    'Remove-Item Env:NO_COLOR -ErrorAction SilentlyContinue',
     `Set-Location -LiteralPath ${psq(dir)}`,
     `$env:CLAUDE_CODE_AUTO_COMPACT_WINDOW='${win}'`,
     prompt ? `$t=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${b64(prompt)}'))` : '',
     `claude${flags}${task}`,
   ].filter(Boolean).join('; ')
-  const outer = `Start-Process powershell -ArgumentList '-NoExit','-NoProfile','-EncodedCommand','${b64utf16(inner)}'`
+  const outer = `Start-Process wt -ArgumentList '-w','new','powershell','-NoExit','-NoProfile','-EncodedCommand','${b64utf16(inner)}'`
   const r = await $.process.run(['powershell', '-NoProfile', '-Command', outer])
   return r.exitCode === 0 ? null : String(r.stderr).trim() || `powershell exited ${r.exitCode}`
 }
