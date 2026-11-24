@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // link-bridge: a stdio MCP server that lets coding-agent sessions (Claude Code, Codex, Qwen Code, ...)
 // find and message each other, and lets one session host and hand out work to the others.
-// State lives in plain files under LINK_HOME (default ~/.session-link); no dependencies. The server itself never
+// State lives in plain files under LINK_HOME (default ~/.ai-link); no dependencies. The server itself never
 // touches the network: lan.mjs, run separately, links machines on one network (see README).
 import fs from 'node:fs'
 import os from 'node:os'
@@ -10,7 +10,7 @@ import crypto from 'node:crypto'
 import { execFile, execFileSync } from 'node:child_process'
 import { ancestors, windowPid, winType } from './proc.mjs'
 
-const HOME = process.env.LINK_HOME || path.join(os.homedir(), '.session-link')
+const HOME = process.env.LINK_HOME || path.join(os.homedir(), '.ai-link')
 const CLI = process.env.LINK_CLI || 'agent'
 const CWD = process.cwd()
 const ID = crypto.randomUUID()

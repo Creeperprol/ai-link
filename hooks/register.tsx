@@ -364,10 +364,10 @@ const spawnTerminal = async ($: any, dir: string, prompt: string, opts: SpawnOpt
 const PANE_REFRESH_MS = 5000
 let paneTimer: { cancel: () => void } | null = null
 
-// macOS takes a notification's icon from the app that sends it, so each agent CLI has its own copy of terminal-notifier (~/.session-link/<app>.app, made by link-bridge/make-notifier.sh) carrying its logo. It can wait for the banner to be dismissed, so it runs in the background. Without the app, plain osascript (generic icon).
+// macOS takes a notification's icon from the app that sends it, so each agent CLI has its own copy of terminal-notifier (~/.ai-link/<app>.app, made by link-bridge/make-notifier.sh) carrying its logo. It can wait for the banner to be dismissed, so it runs in the background. Without the app, plain osascript (generic icon).
 const NOTIFY_APPS: Record<string, string> = { claude: 'ai-link-notifier', codex: 'ai-link-codex', agy: 'ai-link-agy' }
 const NOTIFY_SCRIPT = [
-  'app="$HOME/.session-link/$2.app/Contents/MacOS/terminal-notifier"',
+  'app="$HOME/.ai-link/$2.app/Contents/MacOS/terminal-notifier"',
   'if [ -x "$app" ]; then',
   '  "$app" -title ai-link -message "$1" >/dev/null 2>&1 &',
   'else',
@@ -451,12 +451,12 @@ const startPaneTimer = ($: any, restart = false) => {
   }
 }
 
-// Agent CLIs running on this machine, for the pane: other tools (agy, Codex, Qwen, ...) register with the link-bridge MCP server, which writes one small file per session under ~/.session-link/peers. Read only; a missing folder or bad file just means none.
+// Agent CLIs running on this machine, for the pane: other tools (agy, Codex, Qwen, ...) register with the link-bridge MCP server, which writes one small file per session under ~/.ai-link/peers. Read only; a missing folder or bad file just means none.
 type CliPeer = { cli: string; name: string; cwd: string; seen: number; up: number; tty?: string }
 const BRIDGE_FRESH_MS = 60 * 1000
 // One shell call reads the live bridge entries (a dead process is dropped at once; each line starts with the process's elapsed time) and, after a #PROCS line, lists the agent CLI processes that have a terminal, which are the open windows (background daemons have none), with their tty and folder.
 const BRIDGE_SCRIPT = [
-  'for f in "$HOME"/.session-link/peers/*.json; do',
+  'for f in "$HOME"/.ai-link/peers/*.json; do',
   '  [ -f "$f" ] || continue',
   `  pid=$(sed -n 's/.*"pid":\\([0-9]*\\).*/\\1/p' "$f"); [ -n "$pid" ] || continue`,
   '  kill -0 "$pid" 2>/dev/null || continue',
@@ -520,9 +520,9 @@ async function bridgePeers($: any, now: number): Promise<CliPeer[]> {
     return []
   }
 }
-// The pane's CLI groups: Claude (the other ai-link sessions; this session is in the pane header), then agy and Codex (always shown), then any other CLI that is running.
+// The pane's CLI groups: Claude (the other ai-link sessions; this session is in the pane header), then Codex and agy (always shown), then any other CLI that is running.
 const cliGroups = (claude: Peer[], bridge: CliPeer[]): { cli: string; items: { key: string; name: string; cwd: string; seen: number | null; tty?: string }[] }[] => {
-  const groups = new Map<string, { key: string; name: string; cwd: string; seen: number | null; tty?: string }[]>([['claude', []], ['agy', []], ['codex', []]])
+  const groups = new Map<string, { key: string; name: string; cwd: string; seen: number | null; tty?: string }[]>([['claude', []], ['codex', []], ['agy', []]])
   for (const p of claude) groups.get('claude')!.push({ key: p.id, name: p.name, cwd: p.cwd, seen: p.seen, tty: p.tty })
   for (const b of bridge) {
     if (b.cli === 'claude') continue // Claude sessions are listed from this plugin's own registry above
@@ -700,6 +700,7 @@ export const register: Register = (on, options) => {
       ['tell', 'Message another session: /tell <name> <message>'],
       ['tellall', 'Message every other session: /tellall <message>'],
       ['link', 'Open the session link pane'],
+      ['picker', 'Open the full-screen session picker, switch/resume a session (/picker <name|id>), or continue (/picker continue <cli>)'],
       ['host', 'Make this session the host that hands out work: /host or /host off'],
       ['assign', 'Host: give a task to a session: /assign <name|all> <task>'],
       ['spawn', 'Host: open a new Terminal window with a Claude session: /spawn [dir] [-- first task]'],
@@ -959,6 +960,40 @@ export const register: Register = (on, options) => {
   on('command.run', { command: 'link' }, async $ => {
     await $.ui.open({ id: PANE, title: 'Sessions' })
     return { text: 'Session pane opened.' }
+  })
+
+  on('command.run', { command: 'picker' }, async ($, e) => {
+    const cwd = (await $.session.cwd()) || '.'
+    const raw = String(e?.args || '').trim()
+    const tokens = raw ? raw.split(/\s+/) : []
+    const extra: string[] = []
+    if (tokens.length > 0) {
+      const first = tokens[0].toLowerCase()
+      if (first === 'list') {
+        extra.push('--list', ...tokens.slice(1))
+      } else if (first === 'continue' && tokens[1]) {
+        extra.push('--continue', tokens[1], ...tokens.slice(2))
+      } else if (first === 'tmux') {
+        extra.push('--tmux', ...tokens.slice(1))
+      } else if (first.startsWith('-')) {
+        extra.push(...tokens)
+      } else {
+        extra.push('--focus', raw)
+      }
+    }
+    const script = [
+      'cwd="$1"; shift',
+      'for p in "$HOME/Projects/ai-link/link-bridge/picker.sh" "$HOME/Desktop/Projects/ai-link/link-bridge/picker.sh"; do',
+      '  if [ -x "$p" ]; then "$p" -d "$cwd" "$@"; exit $?; fi',
+      'done',
+      'echo "picker.sh not found" >&2; exit 1',
+    ].join('\n')
+    try {
+      const r = await $.process.run(['sh', '-c', script, 'sh', cwd, ...extra])
+      return { text: r.exitCode === 0 ? String(r.stdout).trim() || 'Opened AI Link session picker.' : `Could not run picker: ${String(r.stderr).trim() || 'picker.sh not found'}` }
+    } catch (err) {
+      return { text: `Could not run picker: ${String(err)}` }
+    }
   })
 
   on('command.run', { command: 'sessions' }, async $ => {
@@ -1262,167 +1297,184 @@ export const register: Register = (on, options) => {
     const groups = cliGroups(list, await bridgePeers($, now))
     // Every row with a terminal can be switched to: Claude windows by their recorded tty, other CLIs by the window found for them.
     const switchable = groups.flatMap(g => g.items.filter(i => i.tty).map(i => ({ ...i, cli: g.cli })))
+    const hotkeyByKey = new Map(switchable.slice(0, 9).map((i, idx) => [`${i.cli}:${i.key}`, String(idx + 1)]))
 
     return (
-      <Box flexDirection="column" paddingX={1}>
-        <Text bold color="cyan">{who ? who.name : '…'}</Text>
-        <Text>
-          <Text dimColor>{who ? who.id.slice(0, 8) : ''} </Text>
-          <Text bold color={myRole === 'host' ? 'yellow' : 'green'}>{myRole === 'host' ? '★ HOST' : 'worker'}</Text>
-        </Text>
-        <Text> </Text>
-
-        <Text bold>OTHER SESSIONS</Text>
-        {list.length === 0 ? <Text dimColor>none running</Text> : null}
-        {list.map(p => {
-          // Only the host knows what it handed out, so only it can say who is working.
-          const open = myRole === 'host' ? board.filter(t => t.toId === p.id && t.status === 'sent' && !isStale(t, now)).slice(-1)[0] : undefined
-          return (
-            <Box key={p.id} flexDirection="column">
+      <Box flexDirection="row" paddingX={1}>
+        <Box flexDirection="column" marginRight={2}>
+          <Text bold color="cyan">SESSION PICKER</Text>
+          <Text bold>AGENTS</Text>
+          {groups.map(g => (
+            <Box key={`cli-${g.cli}`} flexDirection="column" marginBottom={1}>
               <Text>
-                <Text color={open ? 'yellow' : 'green'}>● </Text>
-                <Text bold>{p.name}</Text>
-                <Text dimColor> {ago(now - p.seen)}</Text>
+                <Text bold color={g.cli === 'claude' ? 'cyan' : g.cli === 'codex' ? 'green' : 'magenta'}>{g.cli}</Text>
+                <Text dimColor>{g.items.length === 0 ? ' none' : ` ${g.items.length}`}</Text>
               </Text>
-              {myRole === 'host' ? (
-                <Text key={`state-${p.id}`} wrap="truncate" color={open ? 'yellow' : undefined} dimColor={!open}>
-                  {open ? `  working · ${open.text.slice(0, 24)}` : '  idle'}
-                </Text>
-              ) : null}
+              {g.items.map(i => {
+                const hk = hotkeyByKey.get(`${g.cli}:${i.key}`)
+                return (
+                  <Box key={`cli-${g.cli}-${i.key}`} flexDirection="column">
+                    <Text wrap="truncate">
+                      <Text color="green">● </Text>
+                      <Text bold>{i.name}</Text>
+                      <Text dimColor>{` ${i.cwd ? base(i.cwd) + ' ' : ''}${i.seen !== null ? ago(now - i.seen) : ''}`}</Text>
+                    </Text>
+                    {i.tty ? (
+                      <Button
+                        key={`go-${g.cli}-${i.key}`}
+                        label={`Switch to ${i.name}`}
+                        hotkey={hk}
+                        onPress={async () => {
+                          const f = await focusTty($, i.tty)
+                          if (f) $.ui.toast(`Could not switch: ${f}`)
+                        }}
+                      />
+                    ) : null}
+                  </Box>
+                )
+              })}
             </Box>
-          )
-        })}
-        <Text> </Text>
-
-        {myRole === 'host' ? (
-          <Box flexDirection="column" marginBottom={1}>
-            <Text bold>TASKS</Text>
-            {board.length === 0 ? <Text dimColor>none yet · /assign name task</Text> : null}
-            {board.length ? <Button key="clear" label="Clear board" onPress={() => clearBoard($)} /> : null}
-            {board.slice(-4).map(t => (
-              <Text key={t.id} wrap="truncate">
-                <Text color={t.status === 'failed' ? 'red' : 'yellow'}>{t.status === 'failed' ? '✗ ' : isStale(t, now) ? '⚠ stale ' : '… '}</Text>
-                <Text bold>{t.toName.slice(0, 14)} </Text>
-                <Text dimColor>{t.text.slice(0, 28)}</Text>
-              </Text>
-            ))}
-          </Box>
-        ) : waiting.length ? (
-          <Box flexDirection="column" marginBottom={1}>
-            <Text bold>FROM THE HOST</Text>
-            {waiting.slice(-4).map(i => (
-              <Text key={i.id} wrap="truncate">
-                <Text color="yellow">● </Text>
-                <Text bold>{i.id} </Text>
-                <Text dimColor>{i.text}</Text>
-              </Text>
-            ))}
-          </Box>
-        ) : null}
-
-        <Box flexDirection="column" marginBottom={1}>
-          <Text bold>PROMPT A WORKER</Text>
-          {list.length === 0 ? (
-            <Text dimColor>no other sessions yet</Text>
-          ) : (
-            <Box flexDirection="column">
-              <Select
-                key="target"
-                label="to "
-                value={pickedId}
-                options={[{ value: 'all', label: 'all workers' }, ...list.map(p => ({ value: p.id, label: p.name }))]}
-                onSelect={v => update($, target, () => v)}
-              />
-              <Input
-                key="prompt"
-                placeholder="type a task, Enter to send"
-                submitLabel="send"
-                onSubmit={async text => {
-                  const task = text.trim()
-                  if (!task || !who) return
-                  if (myRole !== 'host') await setHost($, who, true)
-                  const chosen = pickedId === 'all' ? list : list.filter(p => p.id === pickedId)
-                  let ok = 0
-                  for (const p of chosen) if (!(await assign($, who, p, task))) ok += 1
-                  $.ui.toast(ok ? `Sent to ${ok} session${ok === 1 ? '' : 's'}` : 'Nothing was delivered')
-                }}
-              />
-            </Box>
-          )}
-        </Box>
-
-        <Text bold>MESSAGES</Text>
-        {msgs.length ? <Button key="clear-msgs" label="Clear messages" onPress={() => clearLog($)} /> : null}
-        {msgs.length === 0 ? <Text dimColor>nothing yet</Text> : null}
-        {msgs.slice(-8).map((m, i) => (
-          <Text key={`${m.at}-${i}`} wrap="truncate">
-            <Text color={m.dir === 'in' ? 'yellow' : 'cyan'}>{m.dir === 'in' ? '← ' : '→ '}</Text>
-            <Text bold>{m.who} </Text>
-            <Text dimColor>{m.text}</Text>
-          </Text>
-        ))}
-        <Text> </Text>
-        {switchable.length ? (
-          <Box flexDirection="column" marginBottom={1}>
-            <Text bold>SWITCH SESSION</Text>
-            {switchable.map(i => (
-              <Button
-                key={`go-${i.cli}-${i.key}`}
-                label={`Switch to ${i.name}`}
-                onPress={async () => {
-                  const f = await focusTty($, i.tty)
-                  if (f) $.ui.toast(`Could not switch: ${f}`)
-                }}
-              />
-            ))}
-          </Box>
-        ) : null}
-        <Box>
-          <Button key="refresh" label="Refresh" hotkey="r" onPress={() => $.ui.invalidate('ui.render')} />
-          <Text> </Text>
+          ))}
           <Button
-            key="host"
-            label={myRole === 'host' ? 'Stop hosting' : 'Become host'}
-            onPress={() => (who ? setHost($, who, myRole !== 'host') : undefined)}
+            key="open-sidebar"
+            label="Session picker"
+            onPress={async () => {
+              const cwd = (await $.session.cwd()) || '.'
+              const script = 'for p in "$HOME/Projects/ai-link/link-bridge/picker.sh" "$HOME/Desktop/Projects/ai-link/link-bridge/picker.sh"; do if [ -x "$p" ]; then "$p" -d "$1"; exit $?; fi; done; exit 1'
+              const r = await $.process.run(['sh', '-c', script, 'sh', cwd])
+              if (r.exitCode !== 0) $.ui.toast('Could not open session picker')
+            }}
           />
         </Box>
-        <Text> </Text>
-        <Text dimColor>{'-'.repeat(30)}</Text>
-        <Text bold>AGENTS</Text>
-        {groups.map(g => (
-          <Box key={`cli-${g.cli}`} flexDirection="column">
-            <Text>
-              <Text bold color="magenta">{g.cli}</Text>
-              <Text dimColor>{g.items.length === 0 ? ' none' : ` ${g.items.length}`}</Text>
-            </Text>
-            {g.items.map(i => (
-              <Text key={`cli-${g.cli}-${i.key}`} wrap="truncate">
-                <Text color="green">● </Text>
-                <Text bold>{i.name}</Text>
-                <Text dimColor>{` ${i.cwd ? base(i.cwd) + ' ' : ''}${i.seen !== null ? ago(now - i.seen) : ''}`}</Text>
-              </Text>
-            ))}
-          </Box>
-        ))}
-        <Text dimColor>subagents</Text>
-        {agents.length === 0 ? <Text dimColor>none in this session</Text> : null}
-        {viewed ? <Button key="agent-main" label="← Back to main" onPress={() => $.ui.view({})} /> : null}
-        {agents.map(a => {
-          const live = a.status === 'running' || a.status === 'pending' || a.status === 'waiting'
-          return (
-            <Box key={a.id} flexDirection="column">
-              <Text wrap="truncate">
-                <Text color={live ? 'yellow' : 'green'}>{a.id === viewed ? '▶ ' : '● '}</Text>
-                <Text bold>{(a.name ?? a.type).slice(0, 16)} </Text>
-                <Text dimColor>{a.status}</Text>
-              </Text>
-              <Text key={`desc-${a.id}`} wrap="truncate" dimColor>{`  ${a.description}`.slice(0, 36)}</Text>
-              {a.id === viewed ? null : (
-                <Button key={`view-${a.id}`} label={`View ${a.name ?? a.type}`} onPress={() => $.ui.view({ agentId: a.id })} />
-              )}
+
+        <Box flexDirection="column" flexGrow={1}>
+          <Text bold color="cyan">{who ? who.name : '…'}</Text>
+          <Text>
+            <Text dimColor>{who ? who.id.slice(0, 8) : ''} </Text>
+            <Text bold color={myRole === 'host' ? 'yellow' : 'green'}>{myRole === 'host' ? '★ HOST' : 'worker'}</Text>
+          </Text>
+          <Text> </Text>
+
+          <Text bold>OTHER SESSIONS</Text>
+          {list.length === 0 ? <Text dimColor>none running</Text> : null}
+          {list.map(p => {
+            // Only the host knows what it handed out, so only it can say who is working.
+            const open = myRole === 'host' ? board.filter(t => t.toId === p.id && t.status === 'sent' && !isStale(t, now)).slice(-1)[0] : undefined
+            return (
+              <Box key={p.id} flexDirection="column">
+                <Text>
+                  <Text color={open ? 'yellow' : 'green'}>● </Text>
+                  <Text bold>{p.name}</Text>
+                  <Text dimColor> {ago(now - p.seen)}</Text>
+                </Text>
+                {myRole === 'host' ? (
+                  <Text key={`state-${p.id}`} wrap="truncate" color={open ? 'yellow' : undefined} dimColor={!open}>
+                    {open ? `  working · ${open.text.slice(0, 24)}` : '  idle'}
+                  </Text>
+                ) : null}
+              </Box>
+            )
+          })}
+          <Text> </Text>
+
+          {myRole === 'host' ? (
+            <Box flexDirection="column" marginBottom={1}>
+              <Text bold>TASKS</Text>
+              {board.length === 0 ? <Text dimColor>none yet · /assign name task</Text> : null}
+              {board.length ? <Button key="clear" label="Clear board" onPress={() => clearBoard($)} /> : null}
+              {board.slice(-4).map(t => (
+                <Text key={t.id} wrap="truncate">
+                  <Text color={t.status === 'failed' ? 'red' : 'yellow'}>{t.status === 'failed' ? '✗ ' : isStale(t, now) ? '⚠ stale ' : '… '}</Text>
+                  <Text bold>{t.toName.slice(0, 14)} </Text>
+                  <Text dimColor>{t.text.slice(0, 28)}</Text>
+                </Text>
+              ))}
             </Box>
-          )
-        })}
+          ) : waiting.length ? (
+            <Box flexDirection="column" marginBottom={1}>
+              <Text bold>FROM THE HOST</Text>
+              {waiting.slice(-4).map(i => (
+                <Text key={i.id} wrap="truncate">
+                  <Text color="yellow">● </Text>
+                  <Text bold>{i.id} </Text>
+                  <Text dimColor>{i.text}</Text>
+                </Text>
+              ))}
+            </Box>
+          ) : null}
+
+          <Box flexDirection="column" marginBottom={1}>
+            <Text bold>PROMPT A WORKER</Text>
+            {list.length === 0 ? (
+              <Text dimColor>no other sessions yet</Text>
+            ) : (
+              <Box flexDirection="column">
+                <Select
+                  key="target"
+                  label="to "
+                  value={pickedId}
+                  options={[{ value: 'all', label: 'all workers' }, ...list.map(p => ({ value: p.id, label: p.name }))]}
+                  onSelect={v => update($, target, () => v)}
+                />
+                <Input
+                  key="prompt"
+                  placeholder="type a task, Enter to send"
+                  submitLabel="send"
+                  onSubmit={async text => {
+                    const task = text.trim()
+                    if (!task || !who) return
+                    if (myRole !== 'host') await setHost($, who, true)
+                    const chosen = pickedId === 'all' ? list : list.filter(p => p.id === pickedId)
+                    let ok = 0
+                    for (const p of chosen) if (!(await assign($, who, p, task))) ok += 1
+                    $.ui.toast(ok ? `Sent to ${ok} session${ok === 1 ? '' : 's'}` : 'Nothing was delivered')
+                  }}
+                />
+              </Box>
+            )}
+          </Box>
+
+          <Text bold>MESSAGES</Text>
+          {msgs.length ? <Button key="clear-msgs" label="Clear messages" onPress={() => clearLog($)} /> : null}
+          {msgs.length === 0 ? <Text dimColor>nothing yet</Text> : null}
+          {msgs.slice(-8).map((m, i) => (
+            <Text key={`${m.at}-${i}`} wrap="truncate">
+              <Text color={m.dir === 'in' ? 'yellow' : 'cyan'}>{m.dir === 'in' ? '← ' : '→ '}</Text>
+              <Text bold>{m.who} </Text>
+              <Text dimColor>{m.text}</Text>
+            </Text>
+          ))}
+          <Text> </Text>
+          <Box>
+            <Button key="refresh" label="Refresh" hotkey="r" onPress={() => $.ui.invalidate('ui.render')} />
+            <Text> </Text>
+            <Button
+              key="host"
+              label={myRole === 'host' ? 'Stop hosting' : 'Become host'}
+              onPress={() => (who ? setHost($, who, myRole !== 'host') : undefined)}
+            />
+          </Box>
+          <Text> </Text>
+          <Text dimColor>subagents</Text>
+          {agents.length === 0 ? <Text dimColor>none in this session</Text> : null}
+          {viewed ? <Button key="agent-main" label="← Back to main" onPress={() => $.ui.view({})} /> : null}
+          {agents.map(a => {
+            const live = a.status === 'running' || a.status === 'pending' || a.status === 'waiting'
+            return (
+              <Box key={a.id} flexDirection="column">
+                <Text wrap="truncate">
+                  <Text color={live ? 'yellow' : 'green'}>{a.id === viewed ? '▶ ' : '● '}</Text>
+                  <Text bold>{(a.name ?? a.type).slice(0, 16)} </Text>
+                  <Text dimColor>{a.status}</Text>
+                </Text>
+                <Text key={`desc-${a.id}`} wrap="truncate" dimColor>{`  ${a.description}`.slice(0, 36)}</Text>
+                {a.id === viewed ? null : (
+                  <Button key={`view-${a.id}`} label={`View ${a.name ?? a.type}`} onPress={() => $.ui.view({ agentId: a.id })} />
+                )}
+              </Box>
+            )
+          })}
+        </Box>
       </Box>
     )
   })

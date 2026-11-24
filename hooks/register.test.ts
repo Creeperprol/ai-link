@@ -896,7 +896,7 @@ test('the pane lists Claude, agy and Codex sessions under AGENTS', async ($, on)
     bridgeLine('agy', 'agy-old-0000', '/work/old', 120000), // gone quiet for 2 minutes: not shown
     bridgeLine('qwen', 'qwen-q-2222', '/work/q', 2000),
   ].join('\n') + '\n'
-  on('process.run', (_$: any, e: any) => ({ value: { exitCode: 0, stdout: JSON.stringify(e).includes('.session-link') ? lines : '', stderr: '' } }))
+  on('process.run', (_$: any, e: any) => ({ value: { exitCode: 0, stdout: JSON.stringify(e).includes('.ai-link') ? lines : '', stderr: '' } }))
   await $.session.start({ source: 'startup', cwd: '/work/me' } as any)
   const ui = await mountPane($)
   expect(await ui.find({ type: 'Text', text: /^claude$/ })).toBeDefined()
@@ -963,7 +963,7 @@ const paneWith = async ($: any, on: any, stdout: string, store = new Map<string,
       osascript.push(j)
       return { value: { exitCode: 0, stdout: 'ok', stderr: '' } }
     }
-    return { value: { exitCode: 0, stdout: j.includes('.session-link') ? stdout : '', stderr: '' } }
+    return { value: { exitCode: 0, stdout: j.includes('.ai-link') ? stdout : '', stderr: '' } }
   })
   await $.session.start({ source: 'startup', cwd: '/work/me' } as any)
   return mountPane($)
@@ -1260,4 +1260,34 @@ test('on Windows a session records win:<pid> as its address', async ($, on) => {
   })
   await $.session.start({ source: 'startup', cwd: 'C:\\Work' } as any)
   expect(store.get('peer:aaaa1111-0000')).toMatchObject({ tty: 'win:4242' })
+})
+
+test('the pane shows the left-side SESSION PICKER for Claude, Codex and agy plus a Session picker launcher', async ($, on) => {
+  const store = new Map<string, unknown>([['peer:bbbb2222-0000', { ...OTHER, tty: 'ttys009' }]])
+  const ui = await paneWith($, on, bridgeOut([['01:00', 'codex', 'codex-1', '/w'], ['01:00', 'agy', 'agy-1', '/w']], [['codex', 'ttys002', '/w'], ['agy', 'ttys003', '/w']]), store)
+  expect(await ui.find({ type: 'Text', text: /SESSION PICKER/ })).toBeDefined()
+  expect(await ui.find({ type: 'Button', text: /Switch to other-bbbb/ })).toBeDefined()
+  expect(await ui.find({ type: 'Button', text: /Switch to codex-1/ })).toBeDefined()
+  expect(await ui.find({ type: 'Button', text: /Switch to agy-1/ })).toBeDefined()
+  expect(await ui.find({ type: 'Button', text: /Session picker/ })).toBeDefined()
+})
+
+test('/picker runs picker.sh to open the picker, switch/resume a session, or continue', async ($, on) => {
+  const ran: string[] = []
+  stand(on, [], new Map())
+  on('process.run', (_$: any, e: any) => {
+    const j = JSON.stringify(e)
+    ran.push(j)
+    return { value: { exitCode: 0, stdout: 'Opened AI Link full-screen session picker.', stderr: '' } }
+  })
+  await $.session.start({ source: 'startup', cwd: '/work/me' } as any)
+  const r = await run($, 'picker', '')
+  expect(JSON.stringify(r)).toContain('Opened AI Link full-screen session picker')
+  expect(ran.some(s => s.includes('picker.sh'))).toBe(true)
+
+  await run($, 'picker', 'claude-1')
+  expect(ran.some(s => s.includes('"--focus"') && s.includes('"claude-1"'))).toBe(true)
+
+  await run($, 'picker', 'continue agy')
+  expect(ran.some(s => s.includes('"--continue"') && s.includes('"agy"'))).toBe(true)
 })

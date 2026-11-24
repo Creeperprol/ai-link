@@ -3,9 +3,9 @@
 # macOS takes a notification's icon from the sending app's bundle, and terminal-notifier 3.x ignores -appIcon, so a custom icon needs a custom copy.
 #
 #   make-notifier.sh [claude|codex|agy|all]     (default: all)
-#     claude -> ~/.session-link/ai-link-notifier.app  (Claude Code mascot, shown as "ai-link")
-#     codex  -> ~/.session-link/ai-link-codex.app     (Codex logo,         shown as "Codex")
-#     agy    -> ~/.session-link/ai-link-agy.app       (Antigravity logo,   shown as "Antigravity")
+#     claude -> ~/.ai-link/ai-link-notifier.app  (Claude Code mascot, shown as "ai-link")
+#     codex  -> ~/.ai-link/ai-link-codex.app     (Codex logo,         shown as "Codex")
+#     agy    -> ~/.ai-link/ai-link-agy.app       (Antigravity logo,   shown as "Antigravity")
 # Logos are assets/*.png next to this folder. Needs `brew install terminal-notifier`. The first run of each app makes macOS ask to
 # allow notifications; if they stay off, turn them on in System Settings > Notifications.
 set -euo pipefail
@@ -16,7 +16,7 @@ LS=/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.f
 
 # make <app dir name> <bundle id suffix> <display name> <logo png>
 make() {
-  local app="$HOME/.session-link/$1.app" png="$ROOT/assets/$4" tmp; tmp="$(mktemp -d)"
+  local app="$HOME/.ai-link/$1.app" png="$ROOT/assets/$4" tmp; tmp="$(mktemp -d)"
   [ -f "$png" ] || { echo "logo not found: $png" >&2; return 1; }
   mkdir -p "$tmp/i.iconset"
   for s in 16 32 128 256 512; do
@@ -24,7 +24,7 @@ make() {
     sips -z $((s * 2)) $((s * 2)) "$png" --out "$tmp/i.iconset/icon_${s}x${s}@2x.png" >/dev/null
   done
   iconutil -c icns "$tmp/i.iconset" -o "$tmp/i.icns"
-  rm -rf "$app"; mkdir -p "$HOME/.session-link"
+  rm -rf "$app"; mkdir -p "$HOME/.ai-link"
   cp -R "$SRC" "$app"; chmod -R u+w "$app"
   local plist="$app/Contents/Info.plist"
   cp "$tmp/i.icns" "$app/Contents/Resources/$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIconFile' "$plist" | sed 's/\.icns$//').icns"

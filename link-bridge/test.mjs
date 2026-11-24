@@ -383,3 +383,194 @@ test('install-skill.sh copies the share skill into the skill folders that exist'
   assert.match(r.stdout, /skip .*-missing/)
   assert.equal(spawnSync('bash', [script, 'no/such'], { encoding: 'utf8' }).status, 2)
 })
+
+test('picker.mjs merges Claude, Codex and agy sessions from bridge, tmux and processes, and renders a clickable left sidebar', async () => {
+  const { buildSessionGroups, renderSidebar, focusSession } = await import('./picker.mjs')
+  const now = 10_000
+  const { groups, flat } = buildSessionGroups({
+    now,
+    hostId: 'id-claude',
+    bridgePeers: [
+      { id: 'id-claude', name: 'claude-host', cli: 'claude', cwd: '/work/app', pid: 100, tty: 'ttys001', pane: '', seen: now },
+      { id: 'id-codex-new', name: 'codex-1', cli: 'codex', cwd: '/work/app', pid: 201, tty: '', pane: '%2', seen: now },
+      { id: 'id-codex-old', name: 'codex-stale', cli: 'codex', cwd: '/work/app', pid: 202, tty: '', pane: '', seen: now },
+      { id: 'id-agy', name: 'agy-1', cli: 'agy', cwd: '/work/app', pid: 301, tty: 'ttys003', pane: '', seen: now },
+    ],
+    tmuxPanes: [
+      { cli: 'codex', pid: 201, session: 'ai-link', windowIndex: 1, windowName: 'codex-1', pane: '%2', cwd: '/work/app', paneActive: false, windowActive: false, tty: 'ttys010' },
+      { cli: 'agy', pid: 399, session: 'ai-link', windowIndex: 2, windowName: 'agy-unlinked', pane: '%3', cwd: '/work/other', paneActive: true, windowActive: true, tty: 'ttys011' },
+    ],
+    procWindows: [
+      { cli: 'claude', tty: 'ttys001', pid: 100, cwd: '/work/app' },
+      { cli: 'codex', tty: 'ttys002', pid: 202, cwd: '/work/app' },
+      { cli: 'agy', tty: 'ttys003', pid: 301, cwd: '/work/app' },
+    ],
+    etimes: new Map([[201, 10], [202, 500]]),
+  })
+
+  assert.deepEqual(groups.map(g => g.cli), ['claude', 'codex', 'agy'])
+  assert.equal(groups[0].items.length, 1)
+  assert.equal(groups[0].items[0].isHost, true)
+  assert.equal(groups[1].items.some(i => i.name === 'codex-1' && i.pane === '%2'), true)
+  assert.equal(groups[2].items.length, 2)
+  assert.equal(groups[2].items.some(i => i.name === 'agy-unlinked' && i.pane === '%3'), true)
+
+  const { screen, rowMap } = renderSidebar({ groups, selectedIndex: 1, width: 32, height: 24, mode: 'tmux', now })
+  assert.match(screen, /AI-LINK WORKSPACE/)
+  assert.match(screen, /CLAUDE/)
+  assert.match(screen, /CODEX/)
+  assert.match(screen, /AGY/)
+  assert.equal(rowMap.size, flat.length)
+
+  const logFile = path.join(HOME, 'picker-focus.log')
+  const res = await focusSession(flat[0], { logFile })
+  assert.equal(res.ok, true)
+  assert.match(fs.readFileSync(logFile, 'utf8'), /claude-host/)
+})
+
+test('picker.sh and link-workspace.sh validate arguments and build commands in dry-run mode', async () => {
+  const { spawnSync } = await import('node:child_process')
+  const pickerSh = new URL('./picker.sh', import.meta.url).pathname
+  const wsSh = new URL('./link-workspace.sh', import.meta.url).pathname
+
+  const pFull = spawnSync('bash', [pickerSh, '-n', '-d', os.tmpdir()], { encoding: 'utf8' })
+  assert.equal(pFull.status, 0)
+  assert.match(pFull.stdout, /fullscreen: .*picker\.mjs/)
+  const pOk = spawnSync('bash', [pickerSh, '-n', '-w', '320', '-d', os.tmpdir()], { encoding: 'utf8' })
+  assert.equal(pOk.status, 0)
+  assert.match(pOk.stdout, /sidebar\(320px\): .*picker\.mjs/)
+  assert.equal(spawnSync('bash', [pickerSh, '-n', '-w', '50'], { encoding: 'utf8' }).status, 2)
+
+  const wOk = spawnSync('bash', [wsSh, '-n', '-s', 'work-1', '-m', 'all', '-w', '30', '-d', os.tmpdir()], { encoding: 'utf8' })
+  assert.equal(wOk.status, 0)
+  assert.match(wOk.stdout, /workspace session=work-1 mode=all width=30/)
+  assert.equal(spawnSync('bash', [wsSh, '-n', '-m', 'bogus'], { encoding: 'utf8' }).status, 2)
+  assert.equal(spawnSync('bash', [wsSh, '-n', '-w', '10'], { encoding: 'utf8' }).status, 2)
+})
+
+test('picker.mjs discovers past Claude, Codex and agy sessions and resumes/continues them', async () => {
+  const { readPastSessions, buildSessionGroups, renderSidebar, focusSession, continueLatestCli, resumeCommandFor, continueCommandFor, ago } = await import('./picker.mjs')
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'picker-past-'))
+  const claudeDir = path.join(root, 'claude-projects', '-work-app')
+  const codexDir = path.join(root, 'codex-sessions', '2026', '11', '24')
+  const agyDir = path.join(root, 'agy')
+  fs.mkdirSync(claudeDir, { recursive: true })
+  fs.mkdirSync(codexDir, { recursive: true })
+  fs.mkdirSync(agyDir, { recursive: true })
+
+  fs.writeFileSync(path.join(claudeDir, '11111111-1111-1111-1111-111111111111.jsonl'), [
+    JSON.stringify({ type: 'mode', mode: 'normal', sessionId: '11111111-1111-1111-1111-111111111111' }),
+    JSON.stringify({ type: 'user', cwd: '/work/app', sessionId: '11111111-1111-1111-1111-111111111111', message: { role: 'user', content: 'build the login screen' } }),
+  ].join('\n') + '\n')
+
+  fs.writeFileSync(path.join(codexDir, 'rollout-2026-11-24T10-00-00-22222222-2222-2222-2222-222222222222.jsonl'), [
+    JSON.stringify({ type: 'session_meta', payload: { id: '22222222-2222-2222-2222-222222222222', cwd: '/work/api' } }),
+    JSON.stringify({ type: 'response_item', payload: { role: 'user', content: [{ type: 'input_text', text: '<environment_context>skip me</environment_context>' }] } }),
+    JSON.stringify({ type: 'response_item', payload: { role: 'user', content: [{ type: 'input_text', text: 'fix flaky webhook test' }] } }),
+  ].join('\n') + '\n')
+
+  fs.writeFileSync(path.join(agyDir, 'history.jsonl'), [
+    JSON.stringify({ display: '/clear', timestamp: 1000, workspace: '/work/web', conversationId: '33333333-3333-3333-3333-333333333333', type: 'slash_command' }),
+    JSON.stringify({ display: 'add dark mode toggle', timestamp: 2000, workspace: '/work/web', conversationId: '33333333-3333-3333-3333-333333333333' }),
+  ].join('\n') + '\n')
+
+  const past = readPastSessions({
+    claudeDir: path.join(root, 'claude-projects'),
+    codexDir: path.join(root, 'codex-sessions'),
+    agyDir,
+    limitPerCli: 5,
+  })
+  assert.equal(past.length, 3)
+  assert.equal(past.find(p => p.cli === 'claude')?.name, 'build the login screen')
+  assert.equal(past.find(p => p.cli === 'codex')?.name, 'fix flaky webhook test')
+  assert.equal(past.find(p => p.cli === 'agy')?.name, 'add dark mode toggle')
+
+  const now = 10_000_000
+  const { groups, flat } = buildSessionGroups({
+    now,
+    bridgePeers: [{ id: 'live-claude', name: 'claude-live', cli: 'claude', cwd: '/work/app', pid: 100, tty: 'ttys001', pane: '', seen: now }],
+    procWindows: [{ cli: 'claude', tty: 'ttys001', pid: 100, cwd: '/work/app' }],
+    pastSessions: past,
+  })
+  assert.equal(groups[0].items[0].isPast, undefined)
+  assert.equal(groups[0].items[1].isPast, true)
+  assert.equal(flat.filter(i => i.isPast).length, 3)
+
+  // Render includes past icon (↺) and live/past counts (narrow sidebar)
+  const { screen, rowMap } = renderSidebar({ groups, selectedIndex: 1, width: 36, height: 24, now })
+  assert.match(screen, /↺/)
+  assert.match(screen, /1 live · 1 past/)
+  assert.equal(rowMap.size, flat.length)
+
+  // Wide full-screen render draws 3 side-by-side tables (AGY, CLAUDE, CODEX) with 2D hitMap
+  const wide = renderSidebar({ groups, selectedIndex: 0, width: 120, height: 30, now })
+  assert.equal(wide.layout, 'tables')
+  assert.match(wide.screen, /AI-LINK SESSION PICKER/)
+  assert.match(wide.screen, /AGY \(0 live · 1 past\)/)
+  assert.match(wide.screen, /CLAUDE \(1 live · 1 past\)/)
+  assert.match(wide.screen, /CODEX \(0 live · 1 past\)/)
+  assert.equal(wide.hitMap.length, flat.length)
+  // All 3 columns have distinct horizontal ranges
+  const colStarts = new Set(wide.hitMap.map(h => h.colStart))
+  assert.equal(colStarts.size, 3)
+
+  // Resume commands and focusSession delegation
+  assert.match(resumeCommandFor('claude', '11111111-1111-1111-1111-111111111111'), /claude --resume '11111111-1111-1111-1111-111111111111'/)
+  assert.match(resumeCommandFor('codex', '22222222-2222-2222-2222-222222222222', '/work/api'), /codex resume -C '\/work\/api'.*'22222222-2222-2222-2222-222222222222'/)
+  assert.match(resumeCommandFor('agy', '33333333-3333-3333-3333-333333333333'), /agy --resume '33333333-3333-3333-3333-333333333333'/)
+  assert.equal(resumeCommandFor('claude', 'bad;rm -rf /'), '')
+  assert.match(continueCommandFor('claude'), /claude --continue/)
+  assert.match(continueCommandFor('codex'), /codex resume --last/)
+  assert.match(continueCommandFor('agy'), /agy --continue/)
+  assert.equal(ago(3 * 86_400_000), '3d')
+
+  const logFile = path.join(root, 'resume.log')
+  const r1 = await focusSession(groups[0].items[1], { logFile, dir: root })
+  assert.equal(r1.ok, true)
+  const r2 = await continueLatestCli('agy', { logFile, dir: root })
+  assert.equal(r2.ok, true)
+  const r3 = await focusSession(groups[0].items[1], { logFile, dir: root, inTmux: true })
+  assert.equal(r3.ok, true)
+  const logLines = fs.readFileSync(logFile, 'utf8').trim().split('\n').map(l => JSON.parse(l))
+  assert.equal(logLines[0].action, 'resume')
+  assert.equal(logLines[0].sessionId, '11111111-1111-1111-1111-111111111111')
+  assert.equal(logLines[1].action, 'continue')
+  assert.equal(logLines[1].cli, 'agy')
+  assert.equal(logLines[2].action, 'resume')
+  assert.equal(logLines[2].inTmux, true)
+
+  // Non-AI tmux windows appear in a dedicated TMUX WINDOWS panel in the full-screen view
+  const withTmux = buildSessionGroups({
+    now,
+    tmuxPanes: [
+      { cli: 'tmux', pid: 400, session: 'dev', windowIndex: 0, windowName: 'server', pane: '%9', cwd: '/work/api', paneActive: true, windowActive: true, attached: false, tty: 'ttys020' },
+    ],
+    pastSessions: past,
+  })
+  const tmuxWide = renderSidebar({ groups: withTmux.groups, selectedIndex: withTmux.flat.length - 1, width: 120, height: 30, now })
+  assert.match(tmuxWide.screen, /\[\+Win\]/)
+  assert.match(tmuxWide.screen, /\[\+Split\]/)
+  assert.match(tmuxWide.screen, /TMUX WINDOWS \(1\)/)
+  assert.match(tmuxWide.screen, /dev:0 server/)
+  assert.match(tmuxWide.screen, /detached/)
+  assert.equal(tmuxWide.hitMap.length, withTmux.flat.length)
+  assert.ok(tmuxWide.buttonMap.some(b => b.action === 'new-window' && b.row === 1 && b.colStart === 2))
+  assert.ok(tmuxWide.buttonMap.some(b => b.action === 'resize-left'))
+  assert.ok(tmuxWide.buttonMap.some(b => b.action === 'resize-right'))
+  assert.ok(tmuxWide.buttonMap.some(b => b.action === 'rename'))
+  assert.ok(tmuxWide.buttonMap.some(b => b.action === 'kill'))
+
+  // tmuxControlAction logs all tmux window/pane control actions cleanly
+  const { tmuxControlAction } = await import('./picker.mjs')
+  const tmuxItem = withTmux.flat[withTmux.flat.length - 1]
+  for (const act of ['new-window', 'split-h', 'split-v', 'resize-left', 'resize-right', 'zoom', 'kill']) {
+    const r = await tmuxControlAction(act, tmuxItem, { logFile, dir: root })
+    assert.equal(r.ok, true)
+  }
+  const rRen = await tmuxControlAction('rename', tmuxItem, { logFile, dir: root, newName: 'api-srv' })
+  assert.equal(rRen.ok, true)
+  const allLogs = fs.readFileSync(logFile, 'utf8')
+  assert.match(allLogs, /"action":"tmux:new-window"/)
+  assert.match(allLogs, /"action":"tmux:resize-right"/)
+  assert.match(allLogs, /"newName":"api-srv"/)
+})

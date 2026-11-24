@@ -16,6 +16,7 @@ Two roles. Decide which one you are: the session the skill (or `/host`) made the
 - When finished, your ONLY communication is one call to the `report` tool (task_id from the task) with a short result, in plain text, under ~120 words: what files you changed, what you verified (with the real command output summary), and what you did NOT verify. If you failed or are blocked, report that, also short.
 - After the report call, your entire reply is the single character `.` and nothing else: no "I have finished", no "nothing further", no summary, no status line. (Real run: one worker wrote "I've finished the audit... I'm not doing anything further" instead of `.`; the other got it right.)
 - If the task message is unclear, report the one specific question through `report`; do not chat.
+- **If a command fails or something is wrong:** do **not** guess or retry in a loop—immediately call `report` with the failing command and last lines of error output so the host can re-plan or escalate, then reply `.`.
 - Exception: if the human types directly into your window (a normal prompt, not a `[TASK ...]` message), answer them normally. Silence applies to host tasks only.
 
 **Keep your context small** (workers run long and often):
@@ -31,8 +32,8 @@ Two roles. Decide which one you are: the session the skill (or `/host`) made the
 
 **No headless AI (user rule, 2026-11-15).** Every worker the host starts must run in a window the user can see. Never start a background or print-mode AI: no headless `agy-worker.sh` (always pass `-w`), no `agy-image.sh` (it runs agy headless), no `codex-agent.sh` without `-w`, no `codex exec` / `claude -p` / `agy -p` run by hand. Claude workers come from `spawn` (a Terminal window), or from the tmux grid. If a helper has no window mode, use a windowed worker and `link_assign` the task instead. The Agent tool (in-process subagent) is still allowed where the playbook says so.
 
-1. **Contract first.** Before assigning anything write `CONTRACT.md` and a shared `config.js` (or equivalent): file ownership per worker, data shapes, exported function signatures, tick/call order, every number in one place.
-2. **Assign self-contained tasks** with the `assign` tool: name the files the worker may edit, the contract to read first, the exact "done when" check (a command that must pass), and append: "Work silently: no chat text, only tool calls, then one `report` call with a short result."
+1. **Map & contract first (user rule, 2026-11-23).** If the project lacks a fresh `PROJECT_MAP.md`, create/update it first using `md-master` (plus the short `CLAUDE.md` pointer) so workers never waste tokens searching the repo. Then write `CONTRACT.md` and a shared `config.js` (or equivalent): file ownership per worker, data shapes, exported function signatures, tick/call order, every number in one place.
+2. **Assign self-contained tasks with exact edit targets** via `assign` / `link_assign`: always include the exact file path(s) and function/section/line range that need to be edited (from `PROJECT_MAP.md`), the contract to read first, the exact "done when" check (a command that must pass), and append: "Work silently: no chat text, only tool calls, then one `report` call with a short result. If anything fails, report back to host immediately."
 3. **Never trust a report alone.** Re-run the tests yourself, run an end-to-end check, and look at real output (screenshots, tables) before telling the user it works. Workers often test only against mocks; say what was verified for real vs not.
 4. **Integrate with a diagnose-first loop.** When something is wrong, reproduce it with a script, find the cause, then send the owning worker a precise task with the repro and the target numbers. Do not edit a worker's files yourself while they may be editing them.
 5. **Only deploy or publish when the user asked**, after the checks pass; say plainly what was and was not verified.
@@ -49,7 +50,7 @@ Two roles. Decide which one you are: the session the skill (or `/host`) made the
 ## Host quick start (one run, in order)
 
 1. `peers` -> note the workers; if names are random, `rename` idle ones to `worker-1`, `worker-2`, ... (see Rename).
-2. Write `CONTRACT.md` (ownership, shapes, constants). One owner per file.
+2. Create/refresh `PROJECT_MAP.md` (`md-master`) if missing, and write `CONTRACT.md` (ownership, shapes, constants). One owner per file.
 3. Round 1 = read-only audit/investigation tasks (nobody edits) when the codebase is unfamiliar or the test command is unknown. Round 2 = edits, one owner per file, each with a done-when command.
 4. `assign` (name the worker; `auto` only for equal tasks) + show the split table (`#`, worker, task, size).
 5. While workers run, do only work no worker owns (docs, skill text, checks). Do not poll; reports arrive as messages.
@@ -60,7 +61,7 @@ Two roles. Decide which one you are: the session the skill (or `/host`) made the
 
 **Measured on this machine, `haiku`/`sonnet`, one to three runs per row (indicative, not statistics).** Method note, because an earlier version of this section was WRONG: a transcript has one row per content block, each repeating its message's usage, and streaming rows carry partial output counts. Count each message id once, taking its LARGEST usage record; time a task from its first row to its last *assistant* row (an idle tail otherwise inflates a worker 5x). "Weighted" = cache-create x1.25 + cache-read x0.1 + output x5 + input, in input-token equivalents (this predicted a real `-p` dollar cost within 3%). Compare weighted within a model, not across. The first version double-counted workers and under-counted Agents' output, which wrongly made workers look 2-3x worse on the promo jobs and "5x slower".
 
-| Workload | Agent tool | Session-link worker(s) | Verdict |
+| Workload | Agent tool | AI-link worker(s) | Verdict |
 |---|---|---|---|
 | Trivial one-off (run the plugin tests) | 53.0k, 12.5 s | warm worker 16.6k, 7.5 s | worker 3.2x cheaper, faster |
 | 2 parallel jobs (half-file summaries) | 139.1k, 16.9 s | warm 82.1k, 14.6 s; fresh lean 138.5k, 16.4 s; fresh full-env 162.3k, 24.2 s | fresh lean = tie; warm 41% cheaper; full-env worse |
@@ -91,13 +92,15 @@ Two roles. Decide which one you are: the session the skill (or `/host`) made the
 
 **Pick the model by difficulty (Anthropic's guidance: use the smallest model that meets the quality bar, judge cost per completed task, not per request).** Pass `difficulty` on `spawn` (`/spawn --difficulty`); an explicit `model` wins. Current prices per MTok in/out from the Claude API reference: Haiku 5.5 $0.10/$0.50, Sonnet 5.5 $2/$10, Opus 5.5 $4/$20.
 
-**User's routing rule (set 2026-10-22, overrides the older haiku/sonnet/opus-only split):**
+**User's routing rule (set 2026-10-22, updated 2026-11-23, overrides the older haiku/sonnet/opus-only split):**
 
 | tier | who does it | use for |
 |---|---|---|
-| light | Gemini via `agy` (`gemini-3.8-flash-low`) | small chores, and **making photos/images** (windowed agy worker: `agy-worker.sh -w`, then `link_assign` the image task) |
-| medium | `haiku` (Claude worker) **or** GPT via Codex (`codex-agent.sh -w`, read-only) | reading files, audits, greps, summaries, extraction, running tests, doc/consistency checks |
+| light | Gemini via `agy` (`gemini-3.8-flash-low`) | small chores, **execution commands** (running builds, tests, lints, greps, mechanical checks), and **making photos/images** (windowed agy worker: `agy-worker.sh -w`, then `link_assign` the task) |
+| medium | `haiku` (Claude worker) **or** GPT via Codex (`codex-agent.sh -w`, read-only) | reading files, audits, summaries, extraction, running tests (when using Claude `spawn` workers), doc/consistency checks |
 | hard | `opus` or `sonnet` (Claude worker) | editing code and writing new code: multi-file edits against a contract, refactors, root-causing bugs, subtle correctness |
+
+**Orchestrator-style execution & fail-back (user rule, 2026-11-23):** Keep planning/design/verification on the strong **host** model, and route lightweight workloads and **execution commands** to the **cheapest model** (`gemini-3.8-flash-low` via `agy`, or `haiku` for Claude `spawn`). Workers running execution commands must **fail fast and report back to the host** on any error (never guess or loop); the host diagnoses, re-plans, or escalates to `sonnet`/`opus`.
 
 **Rank by quality and speed (2026-10-22).** Only part of this is measured on this machine; the rest is expectation from model class and must be re-checked with a real benchmark before relying on it.
 
@@ -133,11 +136,12 @@ Rules of thumb: start one tier down when a "done when" command can check the res
 **Task template (copy, fill every field; a worker cannot ask follow-ups cheaply):**
 ```
 [TASK <id>] <one-line goal>  (size S/M/L)
-Own (may edit): <paths>
-Read first: CONTRACT.md section <x>
+Own (may edit): <exact file paths>
+Edit here: <exact file path(s) + function/section/line range from PROJECT_MAP.md>
+Read first: PROJECT_MAP.md + CONTRACT.md section <x>
 Do not touch: <paths>
 Done when: `<exact command>` exits 0 and prints <expected>
-Report: plain text <=120 words: files changed, command output summary, what NOT verified, ctx ~NNk.
+Report: plain text <=120 words: files changed, command output summary, what NOT verified, ctx ~NNk. If a command fails or something is wrong, stop and report the error immediately.
 Work silently: no chat text, only tool calls, then one `report` call.
 ```
 
