@@ -1291,3 +1291,27 @@ test('/picker runs picker.sh to open the picker, switch/resume a session, or con
   await run($, 'picker', 'continue agy')
   expect(ran.some(s => s.includes('"--continue"') && s.includes('"agy"'))).toBe(true)
 })
+
+test('peers and assign use only tmux AI sessions by default unless include_non_tmux is explicitly requested', async ($, on) => {
+  const store = new Map<string, unknown>([
+    ['peer:tmux-1111', { id: 'tmux-1111', name: 'worker-tmux', cwd: '/w', seen: 1000, pane: '%2' }],
+    ['peer:loose-2222', { id: 'loose-2222', name: 'worker-loose', cwd: '/w', seen: 1000, tty: 'ttys005' }],
+  ])
+  stand(on, [], store)
+  await $.session.start({ source: 'startup', cwd: '/w' } as any)
+  await run($, 'host', '')
+
+  const pDefault = JSON.stringify(await $.tool.call({ tool: 'mcp__ai-link__peers' } as any))
+  expect(pDefault).toContain('worker-tmux (w) [tmux:%2]')
+  expect(pDefault).not.toContain('worker-loose (')
+  expect(pDefault).toContain('1 non-tmux session(s) hidden')
+
+  const assignRefused = JSON.stringify(await $.tool.call({ tool: 'mcp__ai-link__assign', worker: 'worker-loose', task: 'hi' } as any))
+  expect(assignRefused).toContain('outside tmux')
+
+  const pExplicit = JSON.stringify(await $.tool.call({ tool: 'mcp__ai-link__peers', include_non_tmux: true } as any))
+  expect(pExplicit).toContain('worker-loose')
+
+  const assignExplicit = JSON.stringify(await $.tool.call({ tool: 'mcp__ai-link__assign', worker: 'worker-loose', task: 'hi', include_non_tmux: true } as any))
+  expect(assignExplicit).toContain('sent to worker-loose')
+})

@@ -5,7 +5,11 @@ description: Share work between AI coding agents (Claude Code, Antigravity agy, 
 
 # share
 
-Hand work to another agent running on this machine, over the link-bridge MCP server (`link_*` tools). Every worker runs in a **visible window**: never start a background or print-mode agent (no `agy -p`, no `codex exec` without its window, no `claude -p`).
+Hand work to another agent running on this machine, over the link-bridge MCP server (`link_*` tools).
+
+**Tmux-only AI by default:** use **ONLY AI sessions running inside tmux** unless the user explicitly asks for loose Terminal windows.
+- `link_peers`, `link_assign`, `link_tell`, `link_tellall`, and `link_rename` hide/refuse non-tmux sessions by default (`include_non_tmux: true` only when the user explicitly asks).
+- Every worker must run in a **visible tmux pane or window**: never start a background or print-mode agent (no `agy -p`, no `codex exec` without its window, no `claude -p`).
 
 ## Prerequisite (once per CLI)
 
@@ -19,14 +23,14 @@ agy mcp add --env LINK_CLI=agy link "$(command -v node)" /path/to/link-bridge/se
 
 ## Open a worker (any CLI can do this from its shell tool)
 
-Run from the `link-bridge/` folder (macOS `.sh`, Windows `.ps1`). Each opens one window and prints the worker's link name.
+Prefer **tmux** (`./link-grid.sh` or tmux panes in the active session). Only use loose Terminal windows (`claude-worker.sh`, `agy-worker.sh`, `codex-agent.sh` outside tmux) when the user explicitly asks:
 
 | Want | Command |
 |---|---|
-| Claude | `./claude-worker.sh -d DIR [-m haiku\|sonnet\|opus] [-N name] [-p "task"]` |
-| Antigravity (agy) | `./agy-worker.sh -d DIR [-m gemini-3.8-flash-low] [-p "task"]` |
-| Codex (one-shot, live window) | `./codex-agent.sh -d DIR [-s workspace-write] "task"` |
-| Many at once (tmux) | `./link-grid.sh -n 4 -m mix` (Windows: `.\link-grid.ps1`) |
+| Many at once in tmux (default) | `./link-grid.sh -d DIR -n 4 -m mix` (Windows: `.\link-grid.ps1`) |
+| Claude (only when asked outside tmux) | `./claude-worker.sh -d DIR [-m haiku\|sonnet\|opus] [-N name] [-p "task"]` |
+| Antigravity (only when asked outside tmux) | `./agy-worker.sh -d DIR [-m gemini-3.8-flash-low] [-p "task"]` |
+| Codex (only when asked outside tmux) | `./codex-agent.sh -d DIR [-s workspace-write] "task"` |
 
 The folder must already be trusted by the CLI you open (Claude: `~/.claude.json`; agy: `trustedWorkspaces`). The scripts only read trust and refuse otherwise; the person decides what to trust.
 

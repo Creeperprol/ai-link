@@ -18,11 +18,11 @@ const T_PEERS = 'mcp__ai-link__peers'
 const T_RENAME = 'mcp__ai-link__rename'
 const T_COMMAND = 'mcp__ai-link__command'
 // What the host's model is told about running workers (added to its system prompt while it is the host).
-const HOST_WORKFLOW = `You are the host of a multi-window setup: other Claude sessions (workers) take tasks you give them with the assign tool and answer with a short report. Run it like this. 1) Contract first: before assigning, write the shared contract (file ownership per worker, data shapes, function signatures, constants in one place). 2) Self-contained tasks: name the files the worker may edit, the contract to read, and the exact done-when check (a command that must pass). Workers already work silently, so do not ask them to chat. 3) Share work evenly: size each task (S one small file, M one module, L several modules), give it to the least-loaded idle worker (assign with worker "auto" does this), never queue two tasks on one worker while another is idle, split a lopsided big task by file ownership, and tell the person the split in one table (worker, task, size). Use worker "all" only for tasks that are truly identical. 4) Never trust a report alone: re-run the tests yourself, run an end-to-end check, look at real output, and say what was verified for real and what was not. 5) Diagnose first: reproduce a problem, find the cause, then send the owning worker a precise task with the repro; do not edit a worker's files while it may be editing them. 6) Watch worker context: a report saying NEEDS COMPACT or ctx ~100k or more means send that worker only small tasks and tell the person to run /compact in its window. 7) Use worker names exactly as peers lists them; if assign says no session matches, call peers again. Deploy or publish only when the person asked, after the checks pass.`
+const HOST_WORKFLOW = `You are the host of a multi-window setup: other AI sessions take tasks you give them with the assign/link_assign tool and answer with a short report. Tmux-only rule: use ONLY AI sessions running inside tmux by default (via tmux grid/panes and tmux peers); do not target non-tmux sessions or spawn loose Terminal windows outside tmux unless the person explicitly asks (pass include_non_tmux: true only when asked). Run it like this. 1) Contract first: before assigning, write the shared contract (file ownership per worker, data shapes, function signatures, constants in one place). 2) Self-contained tasks: name the files the worker may edit, the contract to read, and the exact done-when check (a command that must pass). Workers already work silently, so do not ask them to chat. 3) Share work evenly: size each task (S one small file, M one module, L several modules), give it to the least-loaded idle worker (assign with worker "auto" does this), never queue two tasks on one worker while another is idle, split a lopsided big task by file ownership, and tell the person the split in one table (worker, task, size). Use worker "all" only for tasks that are truly identical. 4) Never trust a report alone: re-run the tests yourself, run an end-to-end check, look at real output, and say what was verified for real and what was not. 5) Diagnose first: reproduce a problem, find the cause, then send the owning worker a precise task with the repro; do not edit a worker's files while it may be editing them. 6) Watch worker context: a report saying NEEDS COMPACT or ctx ~100k or more means send that worker only small tasks and tell the person to run /compact in its window. 7) Use worker names exactly as peers lists them; if assign says no session matches, call peers again. Deploy or publish only when the person asked, after the checks pass.`
 
 const T_SPAWN = 'mcp__ai-link__spawn'
 
-type Peer = { id: string; name: string; cwd: string; seen: number; tty?: string }
+type Peer = { id: string; name: string; cwd: string; seen: number; tty?: string; pane?: string }
 
 const FRESH_MS = 6 * 3600 * 1000
 // A task still open after this long is shown as stale and no longer counts against its worker.
@@ -94,6 +94,32 @@ async function ttyOf($: any): Promise<string | undefined> {
   return myTty || undefined
 }
 
+let myPane: string | undefined
+async function paneOf($: any): Promise<string | undefined> {
+  if (myPane !== undefined) return myPane || undefined
+  try {
+    if (await isWindows($)) {
+      myPane = ''
+      return undefined
+    }
+    const r = await $.process.run(['sh', '-c', 'printf %s "$TMUX_PANE"'])
+    const p = String(r.stdout ?? '').trim()
+    myPane = /^%\d+$/.test(p) ? p : ''
+  } catch {
+    myPane = ''
+  }
+  return myPane || undefined
+}
+
+function tmuxScopedPeers(list: Peer[], hostPane: string | undefined, includeNonTmux: boolean): { list: Peer[]; hidden: number } {
+  if (includeNonTmux) return { list, hidden: 0 }
+  if (hostPane || list.some(p => Boolean(p.pane))) {
+    const filtered = list.filter(p => Boolean(p.pane))
+    return { list: filtered, hidden: list.length - filtered.length }
+  }
+  return { list, hidden: 0 }
+}
+
 // Walks up from this process to the first ancestor that owns a window.
 const WIN_OWNER_PS = '$i = $PID; for ($n = 0; $n -lt 12; $n++) { $c = Get-CimInstance Win32_Process -Filter "ProcessId=$i" -ErrorAction SilentlyContinue; if (-not $c -or -not $c.ParentProcessId) { break }; $i = $c.ParentProcessId; $p = Get-Process -Id $i -ErrorAction SilentlyContinue; if ($p -and $p.MainWindowHandle -ne 0) { $i; break } }'
 
@@ -133,7 +159,7 @@ async function announce($: any, who: Me, cwd: string) {
   // A name chosen for this session (rename or auto-rename) survives a name rebuilt from the folder.
   const saved = (await $.store.get(`name:${who.id}`)) as string | undefined
   const name = saved || who.name
-  const peer: Peer = { id: who.id, name, cwd, seen: await $.clock.now(), tty: await ttyOf($) }
+  const peer: Peer = { id: who.id, name, cwd, seen: await $.clock.now(), tty: await ttyOf($), pane: await paneOf($) }
   await $.store.set(`peer:${who.id}`, peer)
 }
 
@@ -228,7 +254,7 @@ async function multiWindowHook($: any, e: any, next: any) {
       note = `ai-link: another running session ("${rec!.name}") is the host, so this session did not take the host role. Delegation tools will refuse here; tell the person to run /host in this window if they want it to be the host.`
     } else {
       if (!rec || rec.id !== live) await setHost($, who, true)
-      note = 'ai-link is ON and this session is now the HOST (set automatically by this skill). Before delegating, load the tools with ToolSearch: select:mcp__ai-link__peers,mcp__ai-link__spawn,mcp__ai-link__assign,mcp__ai-link__rename,mcp__ai-link__command. Delegate with spawn / assign by default (set `difficulty` and, if the person gave a number, `limit`); use the Agent tool only where the playbook says it is better. Address workers by the exact names `peers` lists; never use "all" or "auto" unless the person asked.'
+      note = 'ai-link is ON and this session is now the HOST (set automatically by this skill). Tmux-only rule: use ONLY AI sessions running inside tmux by default (via tmux grid/panes and tmux peers); do not target non-tmux sessions or spawn loose Terminal windows outside tmux unless the user explicitly asks. Before delegating, load the tools with ToolSearch: select:mcp__ai-link__peers,mcp__ai-link__spawn,mcp__ai-link__assign,mcp__ai-link__rename,mcp__ai-link__command (and mcp__link__link_* for tmux grid/cross-CLI workers). Address workers by the exact names `peers` / `link_peers` lists; never use "all" or "auto" unless the person asked.'
     }
   } catch {
     return r
@@ -718,10 +744,14 @@ export const register: Register = (on, options) => {
     try {
     await $.tool.register({
       name: 'assign',
-      description: 'Host only. Give a task to another Claude Code session (a worker) and carry on; its result comes back as a message. Use worker "all" for every worker, or "auto" for the least-loaded one.',
+      description: 'Host only. Give a task to a tmux AI worker session and carry on; its result comes back as a message. Only AI sessions in tmux are used when tmux is active unless include_non_tmux is true because the user explicitly asked. Use worker "all" for every worker, or "auto" for the least-loaded one.',
       inputSchema: {
         type: 'object',
-        properties: { worker: { type: 'string', description: 'Worker session name, "auto" (least-loaded worker) or "all"' }, task: { type: 'string', description: 'What the worker should do, self-contained' } },
+        properties: {
+          worker: { type: 'string', description: 'Worker session name, "auto" (least-loaded worker) or "all"' },
+          task: { type: 'string', description: 'What the worker should do, self-contained' },
+          include_non_tmux: { type: 'boolean', description: 'Default false: only AI sessions in tmux are used when tmux is active. Set true ONLY when the user explicitly asks to include non-tmux sessions.' },
+        },
         required: ['worker', 'task'],
       },
     })
@@ -754,7 +784,7 @@ export const register: Register = (on, options) => {
     })
     await $.tool.register({
       name: 'spawn',
-      description: 'Host only. Open a new Terminal window running a Claude Code session as a worker. Pass `task` to start it on that task at once (no join, rename or assign step: the fastest path; it reports with `report`). Choose the model by task difficulty (smallest model that meets the quality bar): `difficulty` easy -> haiku (simple, high-volume, read-only: audits, greps, formatting, test runs), medium -> sonnet (everyday coding and multi-file edits with a clear spec), hard -> opus (hardest reasoning, ambiguous design, root-causing unknown bugs); or pass `model` directly, which wins. Pass `limit` (a whole number) to cap how many workers this task may have at once, as the person asked; with no limit there is none. Reuse an idle worker with `assign` instead when one exists.',
+      description: 'Host only. Open a loose non-tmux Terminal window running a Claude Code session as a worker. Tmux-only default: use tmux workers/panes first and only call spawn outside tmux when the user explicitly asks for a non-tmux window. Pass `task` to start it on that task at once (no join, rename or assign step; it reports with `report`). Choose the model by task difficulty: `difficulty` easy -> haiku, medium -> sonnet, hard -> opus; or pass `model` directly, which wins. Pass `limit` (a whole number) to cap how many workers this task may have at once. Reuse an idle worker with `assign` instead when one exists.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -768,7 +798,16 @@ export const register: Register = (on, options) => {
         },
       },
     })
-    await $.tool.register({ name: 'peers', description: 'List the other running Claude Code sessions you can message.' })
+    await $.tool.register({
+      name: 'peers',
+      description: 'List the other running AI sessions you can message (only tmux AI sessions when tmux is active, unless include_non_tmux is true because the user asked).',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          include_non_tmux: { type: 'boolean', description: 'Default false: only AI sessions in tmux are used when tmux is active. Set true ONLY when the user explicitly asks to include non-tmux sessions.' },
+        },
+      },
+    })
     } catch (err) {
       $.ui.toast('ai-link: could not register its tools')
     }
@@ -867,22 +906,34 @@ export const register: Register = (on, options) => {
   })
 
   // The tools the model calls.
-  on('tool.call', { tool: T_PEERS }, async $ => {
+  on('tool.call', { tool: T_PEERS }, async ($, e) => {
     const who = await getMe($)
-    const list = await listPeers($, who ? who.id : '')
-    return { result: list.length ? list.map(p => `${p.name} (${base(p.cwd)})`).join('\n') : 'No other sessions running.' }
+    const input = (e as unknown as { include_non_tmux?: boolean }) || {}
+    const all = await listPeers($, who ? who.id : '')
+    const { list, hidden } = tmuxScopedPeers(all, await paneOf($), Boolean(input.include_non_tmux))
+    const lines = list.map(p => `${p.name} (${base(p.cwd)})${p.pane ? ` [tmux:${p.pane}]` : ''}`)
+    if (hidden > 0) lines.push(`(${hidden} non-tmux session(s) hidden; only tmux AIs are used unless the user asks — pass include_non_tmux: true if asked.)`)
+    return { result: lines.length ? lines.join('\n') : 'No other sessions running.' }
   })
 
   on('tool.call', { tool: T_ASSIGN }, async ($, e) => {
     const who = await getMe($)
     if (!(await isHost($, who))) return { result: `This session is not the host (host record: ${JSON.stringify(await hostRecord($))}). The person must run /host first.` }
-    const input = e as unknown as { worker?: string; task?: string }
+    const input = e as unknown as { worker?: string; task?: string; include_non_tmux?: boolean }
     const worker = String(input.worker ?? '')
     const task = String(input.task ?? '')
     if (!worker || !task) return { result: 'Both worker and task are required.' }
-    const list = await listPeers($, who.id)
+    const includeNonTmux = Boolean(input.include_non_tmux)
+    const all = await listPeers($, who.id)
+    const { list } = tmuxScopedPeers(all, await paneOf($), includeNonTmux)
     const chosen = worker === 'all' ? list : worker === 'auto' ? await leastLoaded($, list) : pick(list, worker)
-    if (chosen.length === 0) return { result: `No session matches "${worker}".` }
+    if (chosen.length === 0) {
+      if (worker !== 'all' && worker !== 'auto' && !includeNonTmux) {
+        const nonTmux = pick(all, worker)
+        if (nonTmux.length > 0) return { result: `"${nonTmux[0].name}" is outside tmux. Only AI sessions in tmux are used unless the user explicitly asks (pass include_non_tmux: true).` }
+      }
+      return { result: `No session matches "${worker}".` }
+    }
     if (worker !== 'all' && chosen.length > 1) return { result: `"${worker}" is ambiguous: ${chosen.map(p => p.name).join(', ')}` }
     const out: string[] = []
     for (const p of chosen) {

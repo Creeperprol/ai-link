@@ -5,7 +5,7 @@ description: Multi-window host/worker mode for Claude Code sessions linked with 
 
 # multi-window
 
-**Loading this skill turns ai-link on by itself.** The ai-link mod hooks the skill's load: it makes this session the HOST automatically (no `/host` needed) and appends a note naming the tools to load. It never takes over from a session that holds a task (that one stays a WORKER) or from a host that is still running; in those cases the appended note says so. When the note says you are the host, your first moves are: (1) `ToolSearch` with `select:mcp__ai-link__peers,mcp__ai-link__spawn,mcp__ai-link__assign,mcp__ai-link__rename,mcp__ai-link__command`; (2) `peers`; (3) delegate with `spawn` / `assign` rather than the Agent tool, except where the playbook below says the Agent tool is better. If the note says another host is running, tell the person to run `/host` here only if they want this window to be the host.
+**Loading this skill turns ai-link on by itself.** The ai-link mod hooks the skill's load: it makes this session the HOST automatically (no `/host` needed) and appends a note naming the tools to load. It never takes over from a session that holds a task (that one stays a WORKER) or from a host that is still running; in those cases the appended note says so. When the note says you are the host, your first moves are: (1) `ToolSearch` with `select:mcp__ai-link__peers,mcp__ai-link__spawn,mcp__ai-link__assign,mcp__ai-link__rename,mcp__ai-link__command` (and `mcp__link__link_*` for tmux grid/cross-CLI workers); (2) `peers` / `link_peers` (only tmux AI sessions are used by default unless the user explicitly asks); (3) open/use workers inside **tmux** (`link-grid.sh` / tmux panes) and delegate with `link_assign` / `assign` rather than spawning loose Terminal windows or the Agent tool, except where the playbook below says otherwise. If the note says another host is running, tell the person to run `/host` here only if they want this window to be the host.
 
 Two roles. Decide which one you are: the session the skill (or `/host`) made the host is the HOST; a session that received a `[TASK ...]` message from the host is a WORKER.
 
@@ -30,7 +30,11 @@ Two roles. Decide which one you are: the session the skill (or `/host`) made the
 
 ## HOST mode (you are the session that ran /host)
 
-**No headless AI (user rule, 2026-11-15).** Every worker the host starts must run in a window the user can see. Never start a background or print-mode AI: no headless `agy-worker.sh` (always pass `-w`), no `agy-image.sh` (it runs agy headless), no `codex-agent.sh` without `-w`, no `codex exec` / `claude -p` / `agy -p` run by hand. Claude workers come from `spawn` (a Terminal window), or from the tmux grid. If a helper has no window mode, use a windowed worker and `link_assign` the task instead. The Agent tool (in-process subagent) is still allowed where the playbook says so.
+**Tmux-only AI (user rule, 2026-11-24).** Use **ONLY AI sessions running inside tmux** unless the user explicitly asks otherwise.
+- Both `link-bridge` (`link_peers` / `link_assign` / `link_tell`) and `ai-link` (`peers` / `assign`) filter to tmux AI sessions by default (`include_non_tmux` is false). Never pass `include_non_tmux: true`, never assign/message non-tmux sessions, and never spawn loose non-tmux Terminal windows (`spawn`, `agy-worker.sh -w`, `codex-agent.sh -w` outside tmux) unless the user explicitly asks for non-tmux windows.
+- When opening new workers, open them inside tmux (`~/Projects/ai-link/link-bridge/link-grid.sh` or tmux panes in the active tmux session).
+
+**No headless AI (user rule, 2026-11-15).** Every worker the host starts must run in a window/pane the user can see. Never start a background or print-mode AI: no headless `agy-worker.sh`, no `agy-image.sh` (it runs agy headless), no `codex-agent.sh` without `-w`, no `codex exec` / `claude -p` / `agy -p` run by hand. If a helper has no tmux/window mode, use a tmux worker and `link_assign` the task instead. The Agent tool (in-process subagent) is still allowed where the playbook says so.
 
 1. **Map & contract first (user rule, 2026-11-23).** If the project lacks a fresh `PROJECT_MAP.md`, create/update it first using `md-master` (plus the short `CLAUDE.md` pointer) so workers never waste tokens searching the repo. Then write `CONTRACT.md` and a shared `config.js` (or equivalent): file ownership per worker, data shapes, exported function signatures, tick/call order, every number in one place.
 2. **Assign self-contained tasks with exact edit targets** via `assign` / `link_assign`: always include the exact file path(s) and function/section/line range that need to be edited (from `PROJECT_MAP.md`), the contract to read first, the exact "done when" check (a command that must pass), and append: "Work silently: no chat text, only tool calls, then one `report` call with a short result. If anything fails, report back to host immediately."
@@ -49,10 +53,10 @@ Two roles. Decide which one you are: the session the skill (or `/host`) made the
 
 ## Host quick start (one run, in order)
 
-1. `peers` -> note the workers; if names are random, `rename` idle ones to `worker-1`, `worker-2`, ... (see Rename).
+1. `peers` / `link_peers` -> note the **tmux** workers (non-tmux sessions are excluded unless the user asks); if names are random, `rename` / `link_rename` idle ones to `worker-1`, `worker-2`, ... (see Rename).
 2. Create/refresh `PROJECT_MAP.md` (`md-master`) if missing, and write `CONTRACT.md` (ownership, shapes, constants). One owner per file.
 3. Round 1 = read-only audit/investigation tasks (nobody edits) when the codebase is unfamiliar or the test command is unknown. Round 2 = edits, one owner per file, each with a done-when command.
-4. `assign` (name the worker; `auto` only for equal tasks) + show the split table (`#`, worker, task, size).
+4. `assign` / `link_assign` (name the worker; `auto` only for equal tasks) + show the split table (`#`, worker, task, size).
 5. While workers run, do only work no worker owns (docs, skill text, checks). Do not poll; reports arrive as messages.
 6. On each report: verify yourself, update the board, hand the next task to the least-loaded idle worker.
 7. Finish with the wrap-up table: verified for real vs not.
@@ -82,8 +86,8 @@ Two roles. Decide which one you are: the session the skill (or `/host`) made the
 **When to use the Agent tool instead:** very wide fan-out of tiny independent tasks, a result you need inside the same turn, and a single tiny read when no worker is idle (booting a window costs about 5 s). Do not spawn a window for a task you could finish in two tool calls.
 
 **Fastest path (use this order)**
-1. An idle worker exists (`peers`): `assign` to it. No boot, warm context. This is the cheapest and fastest.
-2. No idle worker: `spawn` with `task` (the worker starts on it at once, silent, reports with `report`) and `model`. Workers start lean (no MCP servers, no skill listings); pass `lean: false` only when the task needs MCP tools or skills. No join, rename or assign step. Set `difficulty` (or `model`) in the same call.
+1. An idle tmux worker exists (`peers` / `link_peers`): `assign` / `link_assign` to it. No boot, warm context. This is the cheapest and fastest.
+2. No idle tmux worker: open workers in **tmux** (`~/Projects/ai-link/link-bridge/link-grid.sh` or tmux panes in the active session) and assign via `link_assign` / `assign`. Only use `spawn` (loose non-tmux Terminal window) when the user explicitly asks for non-tmux windows.
 3. The user's worker count for this task is reached: do the next piece yourself or queue it for a worker that frees up. The count is the user's to set per task (see below); never invent one or go over it.
 
 **Spawn only in trusted folders.** A worker window in a folder Claude Code does not trust yet stops at "Do you trust this folder?" and never starts (a real run: three probe workers in `/tmp` hung on it and the user had to answer each). The user's home folder is trusted and covers everything under it; `/tmp` and `/private/tmp` are NOT. Leave `dir` unset (it defaults to the host's own folder) or use a subfolder of the project; for scratch work make a folder under the project or home, never a fresh `/tmp` one. The mod now checks `~/.claude.json` first and refuses with the reason instead of opening a window that would hang. Never edit the trust settings yourself: that decision is the user's.
@@ -114,7 +118,7 @@ Two roles. Decide which one you are: the session the skill (or `/host`) made the
 
 Use it like this: when a done-when command can check the result, pick by speed within the tier; when nothing can check it (design, review, ambiguous bugs), pick by quality. Measured here: sonnet vs haiku only (sonnet passed 65/65 hidden tests; haiku was used for read-only and voice work). Codex, agy and opus timings/quality are NOT benchmarked on this machine.
 
-How to launch each: light/Gemini and Codex run through `agy-worker.sh -w` / `codex-agent.sh -w`, always with a window, in the Antigravity and Codex sections below (they are not `spawn` workers). Claude workers use `spawn` with `model` (`haiku`, `sonnet`, `opus`); the `difficulty` shortcut on `spawn` still maps easy->haiku, medium->sonnet, hard->opus, so for medium reading work pass `model: haiku` explicitly. Within the hard tier: `sonnet` for clear-spec edits and new code, `opus` for ambiguous design, unknown-bug root-causing and high-stakes review. Anything that writes files must go to a Claude worker (or Codex with `-s workspace-write` only if asked); Gemini and read-only Codex never edit code.
+How to launch each: by default, open all CLIs inside **tmux** (`link-grid.sh -d <dir> -n <count> -m <claude|codex|agy|mix>` or panes in the current tmux session). Only open loose non-tmux Terminal windows (`spawn`, `agy-worker.sh -w`, `codex-agent.sh -w`) when the user explicitly asks for non-tmux windows. Within Claude: `haiku` for medium reading work, `sonnet` for clear-spec edits and new code, `opus` for ambiguous design, unknown-bug root-causing and high-stakes review. Anything that writes files must go to a Claude worker (or Codex with `-s workspace-write` only if asked); Gemini and read-only Codex never edit code.
 
 Rules of thumb: start one tier down when a "done when" command can check the result (the host verifies anyway), escalate one tier and retry when the check fails twice, never use the hard tier for read-only lookups, and keep the strongest model for the host (planning, verifying, integrating). Name `fable` only when the user asks for Anthropic's most capable model. Workers start with a 100k auto-compact window so they stay small; for UI or big-file workers pass a larger window (see thrash section).
 
@@ -198,7 +202,7 @@ When the user asks to see several AIs working side by side in ONE window ("summo
 5. **Verify** every result yourself (reports are claims), then give the next task to an idle pane.
 6. **Stop:** `tmux kill-session -t link-grid` closes all panes. The user can reattach any time with `tmux attach -t link-grid`.
 
-Notes: a Codex or agy window opened as a plain Terminal tab has no tmux pane and cannot be typed into, so use the grid scripts, not loose tabs. For Claude-only windows that are not in a grid, use `spawn` (above) instead.
+Notes: a Codex or agy window opened as a plain Terminal tab has no tmux pane and cannot be typed into, so always use tmux panes/grid by default. Only open loose Terminal windows (`spawn`, `agy-worker.sh -w`, `codex-agent.sh -w`) if the user explicitly asks for non-tmux windows.
 
 ## If a worker's autocompact thrashes
 Message: "Autocompact is thrashing: the context refilled to the limit within 3 turns of the previous compact, 3 times in a row." Cause: the window is too small for the work (big files re-read after every compact, screenshots).
@@ -215,22 +219,21 @@ Message: "Autocompact is thrashing: the context refilled to the limit within 3 t
 
 
 ## Antigravity CLI (`agy`) workers
-A session can also hand work to an Antigravity CLI session (`agy`, tested on 1.4.4) through the `link-bridge` MCP server, which both Claude Code and `agy` have registered as `link`. This is separate from the ai-link `spawn`/`assign` tools: use the `mcp__link__link_*` tools for agy workers (load them with ToolSearch `select:mcp__link__link_peers,mcp__link__link_host,mcp__link__link_assign,mcp__link__link_inbox,mcp__link__link_board`) and pick ONE family per run.
-1. `link_host on: true`, then start a worker in a window: `~/Projects/ai-link/link-bridge/agy-worker.sh -w -d <trusted folder> -m <model>`. Always pass `-w`; the no-`-w` headless mode is banned (see HOST mode). Run it with Bash; it returns at once.
-2. `link_peers`: the worker appears as `agy-<folder>-<id> [agy]`. Address it by that exact name (other `[claude]` / `[codex]` peers on the list are the user's own windows: never assign to them unless asked).
-3. `link_assign worker=<exact name> task=<self-contained task>`, then `link_inbox wait_seconds=100` for the `RESULT`. Verify it like any report; agy workers are claims too.
+A session can hand work to an Antigravity CLI session (`agy`, tested on 1.4.4) through the `link-bridge` MCP server, which both Claude Code and `agy` have registered as `link`. By default, run `agy` inside **tmux** (`link-grid.sh -m agy` or a tmux pane) so it registers its tmux pane and stays under the tmux-only rule. Only use a loose Terminal window (`agy-worker.sh -w`) when the user explicitly asks for non-tmux windows (and pass `include_non_tmux: true` to `link_peers` / `link_assign` in that case).
+1. `link_host on: true`, then open `agy` in tmux (or if the user explicitly asked for a loose window: `~/Projects/ai-link/link-bridge/agy-worker.sh -w -d <trusted folder> -m <model>`, never headless).
+2. `link_peers`: the tmux worker appears with `tmux:%<id>` (other non-tmux windows are hidden by default; never assign to the user's own window unless asked).
+3. `link_assign worker=<exact name> task=<self-contained task>`, then `link_inbox wait_seconds=100` (if not push-delivered) for the `RESULT`. Verify it like any report; agy workers are claims too.
 - Models (`agy models`): the user's rule sends only LIGHT tasks and image-making to agy: `gemini-3.8-flash-low` (use `gemini-3.8-flash-medium|high` if low is not enough). Medium reading work goes to haiku/Codex and hard code work to opus/sonnet instead of the agy-hosted `claude-*` models.
-- In the window the user can approve tool prompts. Do not use `--dangerously-skip-permissions` and do not add wildcard rules to `~/.gemini/antigravity-cli/settings.json`.
+- In the window the user can approve tool prompts. Do not use `--dangerously-skip-permissions` outside the user-approved tmux grid and do not add wildcard rules to `~/.gemini/antigravity-cli/settings.json`.
 - Security question, like Claude's: an agy window in an untrusted folder stops at "Do you trust the contents of this project?" and never starts. `agy-worker.sh -w` pre-checks `trustedWorkspaces` in that settings file and refuses with the reason. Use a trusted folder (`/tmp` is) or ask the user to open agy there once and answer; never edit the trust list yourself.
-- The worker stops after two empty `link_inbox` waits (about 200 s) or when its first task is done and nothing follows; start another when you have more work.
-- **Images:** do NOT use `agy-image.sh` (it runs agy headless). Start a windowed worker (`agy-worker.sh -w -d <trusted folder>`), `link_assign` it "use generate_image once to make <description>, save it to <path>, RESULT the path", then `link_inbox`. Look at the image yourself before saying it is good. If it fails with `429 RESOURCE_EXHAUSTED` the account's image quota is used up: say so and stop, do not retry in a loop.
+- **Images:** do NOT use `agy-image.sh` (it runs agy headless). Use a tmux `agy` worker (or `agy-worker.sh -w` if the user explicitly asked for a loose window), `link_assign` it "use generate_image once to make <description>, save it to <path>, RESULT the path", then wait for the result. Look at the image yourself before saying it is good. If it fails with `429 RESOURCE_EXHAUSTED` the account's image quota is used up: say so and stop, do not retry in a loop.
 - Verified end to end on this machine: Claude host -> `agy` (gemini-3.8-flash-low) -> `RESULT t6fb4 ... 391 agy`, and two sequential tasks to one worker.
 
 ## Codex as an agent
-For a one-shot task, run `~/Projects/ai-link/link-bridge/codex-agent.sh -w [-d dir] [-s read-only|workspace-write] [-t secs] "task"` with Bash. Always pass `-w`: it opens a Terminal window that shows Codex working live; without `-w` it runs headless, which is banned. It prints the final message and exits, like a subagent (verified: 17 x 23 -> `391` in 12 s).
-- Default is the read-only sandbox (a write attempt is refused, verified); pass `-s workspace-write` only when the task must edit files in `-d`. Never use Codex's bypass or full-access options; the helper does not offer them.
+By default, run Codex inside **tmux** (`link-grid.sh -m codex` or a tmux pane) and use `link_assign` / `link_report`. Only use the loose one-shot helper `~/Projects/ai-link/link-bridge/codex-agent.sh -w [-d dir] [-s read-only|workspace-write] [-t secs] "task"` when the user explicitly asks for a non-tmux Terminal window (always pass `-w`; without `-w` it runs headless, which is banned).
+- Default is the read-only sandbox (a write attempt is refused, verified); pass `-s workspace-write` only when the task must edit files in `-d`. Never use Codex's bypass or full-access options outside the tmux grid.
 - Treat the result as a claim and verify it. Name the folder with `-d`; set `-t` for long tasks.
-- For a long-lived Codex worker, use the `link` MCP tools (`link_assign` / `link_inbox`) with a Codex session that has the bridge; the Codex peer on the list may be the user's own window, so assign to it only when asked.
+- For a long-lived Codex worker in tmux, use the `link` MCP tools (`link_assign` / `link_inbox`). Only pass `include_non_tmux: true` if the user explicitly asks to target a Codex window outside tmux.
 
 ## Known gap: /clear on a worker
 Seen on a real run: after the host ran `command /clear` on a worker, the worker kept running but disappeared from `peers` until it finished its next turn (the heartbeat re-registers it), so `assign` said "no session matches". Root cause not found. Workaround: prefer `assign` to a warm worker without clearing; if you did clear, wake it with one `SendMessage` ping, then `peers`, then `assign`; or kill it and `spawn` a fresh one with the task.

@@ -13,7 +13,7 @@
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { execFile, execFileSync } from 'node:child_process'
+import { execFile, execFileSync, spawn } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { winFocus } from './proc.mjs'
 
@@ -736,16 +736,18 @@ export async function focusSession(item, opts = {}) {
     return { ok: true, message: `Switched to ${item.name}` }
   }
 
-  // Tmux workspace sidebar mode: swap the chosen session into the right-hand main pane of the sidebar's window.
+  // Tmux workspace sidebar mode:
+  // - If the target pane is already visible in the same window, just focus it (never scramble a multi-pane grid).
+  // - Only swap panes when this window is a classic 2-pane sidebar + single-main-pane workspace.
   if (opts.tmuxSidebar && item.pane && opts.selfPane && item.tmuxSession && item.tmuxSession === opts.tmuxSession) {
     const winPanesRes = await run('tmux', ['list-panes', '-t', opts.selfPane, '-F', '#{pane_id}'])
     const siblingPanes = winPanesRes.stdout.split('\n').map(s => s.trim()).filter(p => p && p !== opts.selfPane)
-    const mainPane = siblingPanes[0]
-    if (mainPane) {
-      if (item.pane === mainPane) {
-        await run('tmux', ['select-pane', '-t', mainPane])
-        return { ok: true, message: `Focused ${item.name}` }
-      }
+    if (siblingPanes.includes(item.pane)) {
+      await run('tmux', ['select-pane', '-t', item.pane])
+      return { ok: true, message: `Focused ${item.name}` }
+    }
+    if (siblingPanes.length === 1) {
+      const mainPane = siblingPanes[0]
       const swapped = await run('tmux', ['swap-pane', '-d', '-s', item.pane, '-t', mainPane])
       if (swapped.ok) {
         await run('tmux', ['select-pane', '-t', item.pane])
@@ -850,11 +852,22 @@ export function continueCommandFor(cli, dir = '') {
 async function launchCliCommand(cmd, { label, dir, tmuxSidebar, inTmux, tmuxSession, selfPane } = {}) {
   const workDir = dir && fs.existsSync(dir) ? dir : process.cwd()
   if (tmuxSidebar && tmuxSession && selfPane) {
+    const winPanesRes = await run('tmux', ['list-panes', '-t', selfPane, '-F', '#{pane_id}\t#{pane_width}\t#{pane_height}'])
+    const siblings = winPanesRes.stdout
+      .split('\n')
+      .map(l => l.trim().split('\t'))
+      .filter(parts => parts[0] && parts[0] !== selfPane)
+      .map(([id, w, h]) => ({ id, w: Number(w) || 0, h: Number(h) || 0, area: (Number(w) || 0) * (Number(h) || 0) }))
+    if (siblings.length > 1) {
+      const biggest = siblings.sort((a, b) => b.area - a.area)[0]
+      const flag = (biggest.h > 0 && biggest.w / biggest.h > 2.2) ? '-h' : '-v'
+      const split = await run('tmux', ['split-window', flag, '-t', biggest.id, '-c', workDir, '-P', '-F', '#{pane_id}', cmd])
+      if (split.ok) return { ok: true, message: `Opened ${label}` }
+    }
     const created = await run('tmux', ['new-window', '-d', '-t', tmuxSession, '-n', label, '-c', workDir, '-P', '-F', '#{pane_id}', cmd])
     const newPane = created.stdout.trim()
     if (created.ok && newPane) {
-      const winPanesRes = await run('tmux', ['list-panes', '-t', selfPane, '-F', '#{pane_id}'])
-      const mainPane = winPanesRes.stdout.split('\n').map(s => s.trim()).find(p => p && p !== selfPane)
+      const mainPane = siblings[0]?.id
       if (mainPane) {
         await run('tmux', ['swap-pane', '-d', '-s', newPane, '-t', mainPane])
         await run('tmux', ['select-pane', '-t', newPane])
@@ -992,19 +1005,30 @@ export async function tmuxControlAction(action, item = null, opts = {}) {
   const targetSession = await resolveTargetTmuxSession(item, opts)
   const targetPane = pane || (opts.tmuxSidebar && opts.selfPane ? opts.selfPane : '')
 
-  // In --tmux-sidebar mode, find a non-sidebar pane in the current window so +W / +S add panes on the right without hiding or splitting the sidebar.
+  // In --tmux-sidebar mode, pick the largest non-sidebar pane so +W / +S stay balanced and never crush one corner or split the sidebar.
+  let siblings = []
   let rightSiblingPane = ''
+  let rightSiblingRatio = 1
   if (opts.tmuxSidebar && opts.selfPane) {
-    const winPanesRes = await run('tmux', ['list-panes', '-t', opts.selfPane, '-F', '#{pane_id}'])
-    const siblings = winPanesRes.stdout.split('\n').map(s => s.trim()).filter(p => p && p !== opts.selfPane)
-    if (pane && siblings.includes(pane)) rightSiblingPane = pane
-    else if (siblings.length > 0) rightSiblingPane = siblings[siblings.length - 1]
+    const winPanesRes = await run('tmux', ['list-panes', '-t', opts.selfPane, '-F', '#{pane_id}\t#{pane_width}\t#{pane_height}'])
+    siblings = winPanesRes.stdout
+      .split('\n')
+      .map(l => l.trim().split('\t'))
+      .filter(parts => parts[0] && parts[0] !== opts.selfPane)
+      .map(([id, w, h]) => ({ id, w: Number(w) || 0, h: Number(h) || 0, area: (Number(w) || 0) * (Number(h) || 0) }))
+    const chosen = (pane && siblings.find(s => s.id === pane))
+      || [...siblings].sort((a, b) => b.area - a.area)[0]
+    if (chosen) {
+      rightSiblingPane = chosen.id
+      rightSiblingRatio = chosen.h > 0 ? chosen.w / chosen.h : 1
+    }
   }
 
   if (action === 'new-window') {
     if (opts.tmuxSidebar && rightSiblingPane) {
-      const r = await run('tmux', ['split-window', '-t', rightSiblingPane, '-c', dir])
-      if (!r.ok) return { ok: false, message: 'Could not add terminal pane' }
+      const autoFlag = rightSiblingRatio > 2.2 ? '-h' : '-v'
+      const r = await run('tmux', ['split-window', autoFlag, '-t', rightSiblingPane, '-c', dir])
+      if (!r.ok) return { ok: false, message: 'Could not add terminal pane (pane too small)' }
       return { ok: true, message: 'Added terminal pane' }
     }
     const has = await run('tmux', ['has-session', '-t', targetSession])
@@ -1029,19 +1053,16 @@ export async function tmuxControlAction(action, item = null, opts = {}) {
   if (action === 'resize-left' || action === 'resize-right' || action === 'resize-up' || action === 'resize-down') {
     const dirFlag = action === 'resize-left' ? '-L' : action === 'resize-right' ? '-R' : action === 'resize-up' ? '-U' : '-D'
     const step = (dirFlag === '-L' || dirFlag === '-R') ? '5' : '3'
-    const args = ['resize-pane']
-    if (targetPane) args.push('-t', targetPane)
-    else args.push('-t', targetSession)
-    args.push(dirFlag, step)
-    const r = await run('tmux', args)
+    const resizeTarget = opts.tmuxSidebar && opts.selfPane
+      ? (pane && siblings.some(s => s.id === pane) ? pane : opts.selfPane)
+      : (targetPane || targetSession)
+    const r = await run('tmux', ['resize-pane', '-t', resizeTarget, dirFlag, step])
     return r.ok ? { ok: true, message: `Resized tmux pane (${dirFlag} ${step})` } : { ok: false, message: 'No tmux pane to resize' }
   }
 
   if (action === 'zoom') {
-    const args = ['resize-pane', '-Z']
-    if (pane) args.push('-t', pane)
-    else args.push('-t', targetSession)
-    const r = await run('tmux', args)
+    const zoomTarget = (pane && pane !== opts.selfPane) ? pane : (rightSiblingPane || targetSession)
+    const r = await run('tmux', ['resize-pane', '-Z', '-t', zoomTarget])
     return r.ok ? { ok: true, message: 'Toggled tmux pane zoom' } : { ok: false, message: 'No tmux pane to zoom' }
   }
 
@@ -1057,9 +1078,25 @@ export async function tmuxControlAction(action, item = null, opts = {}) {
   }
 
   if (action === 'kill') {
-    if (!pane) return { ok: false, message: 'Select a tmux window/pane first to close it' }
-    const r = await run('tmux', ['kill-pane', '-t', pane])
-    return r.ok ? { ok: true, message: `Closed tmux pane ${item?.name || pane}` } : { ok: false, message: `Could not close ${pane}` }
+    let killTarget = (pane && pane !== opts.selfPane) ? pane : ''
+    if (!killTarget && opts.tmuxSidebar) {
+      if (siblings.length > 1) killTarget = siblings[siblings.length - 1].id
+      else return { ok: false, message: 'Only 1 terminal pane left' }
+    }
+    if (!killTarget) return { ok: false, message: 'Select a tmux window/pane first to close it' }
+    const pidRes = await run('tmux', ['display-message', '-p', '-t', killTarget, '#{pane_pid}'])
+    const panePid = pidRes.stdout.trim()
+    const r = await run('tmux', ['kill-pane', '-t', killTarget])
+    if (r.ok && /^\d+$/.test(panePid)) {
+      const reaper = path.join(path.dirname(fileURLToPath(import.meta.url)), 'tmux-reap.sh')
+      try {
+        const child = spawn(reaper, ['pid', panePid], { detached: true, stdio: 'ignore' })
+        child.unref()
+      } catch {
+        // reaper optional
+      }
+    }
+    return r.ok ? { ok: true, message: `Closed pane ${item?.pane === killTarget ? (item.name || killTarget) : killTarget}` } : { ok: false, message: `Could not close ${killTarget}` }
   }
 
   return { ok: false, message: `Unknown tmux action: ${action}` }
@@ -1126,10 +1163,21 @@ const padLeft = (str, len) => {
   return ' '.repeat(Math.max(0, len - s.length)) + s
 }
 
+// Places every line at an explicit 1-based terminal row with auto-wrap disabled (\x1b[?7l)
+// so a single wide line can NEVER wrap and shift clickable buttonMap/rowMap/hitMap coordinates.
+const renderPositionedScreen = (lines, rows) => {
+  const limit = Math.min(lines.length, rows)
+  let out = '\x1b[?7l\x1b[H\x1b[2J'
+  for (let i = 0; i < limit; i++) {
+    out += `\x1b[${i + 1};1H${lines[i]}${ANSI.reset}`
+  }
+  return out
+}
+
 const TOP_LEFT_WIDE_BUTTONS = [
   { label: '[+Win]', action: 'new-window', color: ANSI.green },
-  { label: '[+Split]', action: 'split-h', color: ANSI.cyan },
-  { label: '[+VSplit]', action: 'split-v', color: ANSI.cyan },
+  { label: '[+SplitH]', action: 'split-h', color: ANSI.cyan },
+  { label: '[+SplitV]', action: 'split-v', color: ANSI.cyan },
   { label: '[◀]', action: 'resize-left', color: ANSI.yellow },
   { label: '[▶]', action: 'resize-right', color: ANSI.yellow },
   { label: '[Zoom]', action: 'zoom', color: ANSI.magenta },
@@ -1139,7 +1187,16 @@ const TOP_LEFT_WIDE_BUTTONS = [
 
 const TOP_LEFT_NARROW_BUTTONS = [
   { label: '[+W]', action: 'new-window', color: ANSI.green },
-  { label: '[+S]', action: 'split-h', color: ANSI.cyan },
+  { label: '[+H]', action: 'split-h', color: ANSI.cyan },
+  { label: '[+V]', action: 'split-v', color: ANSI.cyan },
+  { label: '[◀]', action: 'resize-left', color: ANSI.yellow },
+  { label: '[▶]', action: 'resize-right', color: ANSI.yellow },
+  { label: '[×]', action: 'kill', color: ANSI.red },
+]
+
+const TOP_LEFT_COMPACT_BUTTONS = [
+  { label: '[+H]', action: 'split-h', color: ANSI.cyan },
+  { label: '[+V]', action: 'split-v', color: ANSI.cyan },
   { label: '[◀]', action: 'resize-left', color: ANSI.yellow },
   { label: '[▶]', action: 'resize-right', color: ANSI.yellow },
   { label: '[×]', action: 'kill', color: ANSI.red },
@@ -1370,7 +1427,10 @@ function renderThreeTables({ groups = [], selectedIndex = 0, width = 120, height
   const helpText = ` ${clip('n:+Win  s:+Split  v:+VSplit  [/]:resize  z:zoom  m:rename  K:kill  ·  a/c/x new  A/C/X cont  p past  q quit', cols - 2)}`
   const helpLine = `${ANSI.bgBar}${ANSI.gray}${padRight(helpText, cols)}${ANSI.reset}`
 
-  const screen = '\x1b[H\x1b[2J' + [...topLines, ...stitched, ...tmuxLines, `${ANSI.subtle}${'─'.repeat(cols)}${ANSI.reset}`, statusLine, helpLine].join('\r\n')
+  const screen = renderPositionedScreen(
+    [...topLines, ...stitched, ...tmuxLines, `${ANSI.subtle}${'─'.repeat(cols)}${ANSI.reset}`, statusLine, helpLine],
+    rows,
+  )
   return { screen, rowMap, hitMap, buttonMap, layout: 'tables', columns: allColumns }
 }
 
@@ -1387,10 +1447,12 @@ export function renderSidebar({ groups = [], selectedIndex = 0, width = 32, heig
   const liveCount = groups.reduce((n, g) => n + g.items.filter(i => !i.isPast).length, 0)
   const title = mode === 'tmux' ? 'AI-LINK WORKSPACE' : 'AI-LINK SESSIONS'
   const countBadge = liveCount === total ? `(${total})` : `(${liveCount}/${total})`
-  const titleShown = clip(` ${title}`, cols - countBadge.length - 2)
+  const titleBudget = Math.max(4, cols - countBadge.length - 2)
+  const titleShown = clip(` ${title}`, titleBudget)
   const titlePad = ' '.repeat(Math.max(1, cols - titleShown.length - countBadge.length - 1))
   headerLines.push(`${ANSI.bgBar}${ANSI.bold}${ANSI.cyan}${titleShown}${ANSI.reset}${ANSI.bgBar}${titlePad}${ANSI.muted}${countBadge} ${ANSI.reset}`)
-  const narrowBar = buildTopLeftToolbar(TOP_LEFT_NARROW_BUTTONS, 2, cols, ANSI.bgBar)
+  const narrowButtons = cols >= 28 ? TOP_LEFT_NARROW_BUTTONS : TOP_LEFT_COMPACT_BUTTONS
+  const narrowBar = buildTopLeftToolbar(narrowButtons, 2, cols, ANSI.bgBar)
   const barFill = ' '.repeat(Math.max(0, cols - narrowBar.plainLen))
   headerLines.push(`${narrowBar.text}${barFill}${ANSI.reset}`)
   headerLines.push(`${ANSI.subtle}${'─'.repeat(cols)}${ANSI.reset}`)
@@ -1401,15 +1463,18 @@ export function renderSidebar({ groups = [], selectedIndex = 0, width = 32, heig
     const badge = CLI_BADGE[g.cli] || ANSI.bgPill
     const liveInGroup = g.items.filter(i => !i.isPast).length
     const pastInGroup = g.items.length - liveInGroup
-    const countLabel = g.items.length === 0
-      ? `${ANSI.muted}none${ANSI.reset}`
+    const cliTag = ` ${g.cli.toUpperCase()} `
+    const rawCount = g.items.length === 0
+      ? 'none'
       : pastInGroup > 0
-        ? `${ANSI.muted}${liveInGroup} live · ${pastInGroup} past${ANSI.reset}`
-        : `${ANSI.muted}${g.items.length}${ANSI.reset}`
-    bodyLines.push({ text: `${ANSI.subtle}╭${ANSI.reset} ${badge}${ANSI.bold} ${g.cli.toUpperCase()} ${ANSI.reset} ${countLabel}` })
+        ? `${liveInGroup} live · ${pastInGroup} past`
+        : `${g.items.length}`
+    const countBudget = Math.max(0, cols - 3 - cliTag.length) // "╭ " + cliTag + " "
+    const clippedCount = countBudget > 0 ? clip(rawCount, countBudget) : ''
+    bodyLines.push({ text: `${ANSI.subtle}╭${ANSI.reset} ${badge}${ANSI.bold}${cliTag}${ANSI.reset}${clippedCount ? ` ${ANSI.muted}${clippedCount}${ANSI.reset}` : ''}` })
 
     if (g.items.length === 0) {
-      bodyLines.push({ text: `${ANSI.subtle}│${ANSI.reset}  ${ANSI.muted}(no sessions)${ANSI.reset}` })
+      bodyLines.push({ text: `${ANSI.subtle}│${ANSI.reset} ${ANSI.muted}${clip('(no sessions)', Math.max(1, cols - 2))}${ANSI.reset}` })
     } else {
       for (const item of g.items) {
         const idx = flatIdx++
@@ -1424,29 +1489,33 @@ export function renderSidebar({ groups = [], selectedIndex = 0, width = 32, heig
             : item.tty
               ? item.tty.replace(/^ttys/, 't')
               : ago(now - item.seen)
-        const prefix = `${num} ${isSel ? '▶' : ' '} ${dot} `
         const suffix = folder ? ` ${folder}` : ''
         const meta = rightTag ? ` ${rightTag}` : ''
-        const bodyBudget = Math.max(6, cols - prefix.length - meta.length - 1)
-        const nameAndFolder = clip(`${item.name}${suffix}`, bodyBudget)
-        const pad = Math.max(0, cols - prefix.length - nameAndFolder.length - meta.length - 1)
+        // Visual width of left gutter: "▶" + num + " " + dot + " " = 5 chars (or "│" + num + " " + dot + " " = 5 chars)
+        const leftW = 5
+        const bodyBudget = Math.max(4, cols - leftW - meta.length)
+        const nameShown = clip(item.name, bodyBudget)
+        const suffixBudget = Math.max(0, bodyBudget - nameShown.length)
+        const suffixShown = suffixBudget > 2 ? clip(suffix, suffixBudget) : ''
+        const usedW = leftW + nameShown.length + suffixShown.length + meta.length
+        const pad = ' '.repeat(Math.max(0, cols - usedW))
 
         if (isSel) selectedLineIdx = bodyLines.length
         if (isSel) {
           bodyLines.push({
             flatIdx: idx,
-            text: `${ANSI.bgBlue}${ANSI.bold} ${prefix}${nameAndFolder}${' '.repeat(pad)}${meta}${ANSI.reset}`,
+            text: `${ANSI.bgBlue}${ANSI.bold}▶${num} ${dot} ${nameShown}${suffixShown}${pad}${meta}${ANSI.reset}`,
           })
         } else if (item.isPast) {
           bodyLines.push({
             flatIdx: idx,
-            text: `${ANSI.subtle}│${ANSI.reset}${ANSI.subtle}${num}  ${ANSI.muted}${dot} ${ANSI.gray}${clip(item.name, bodyBudget)}${ANSI.muted}${clip(suffix, Math.max(0, bodyBudget - item.name.length))}${' '.repeat(pad)}${meta}${ANSI.reset}`,
+            text: `${ANSI.subtle}│${num} ${ANSI.muted}${dot} ${ANSI.gray}${nameShown}${ANSI.muted}${suffixShown}${pad}${meta}${ANSI.reset}`,
           })
         } else {
           const dotColor = item.tmuxActive ? ANSI.cyan : item.isHost ? ANSI.yellow : ANSI.green
           bodyLines.push({
             flatIdx: idx,
-            text: `${ANSI.subtle}│${ANSI.reset}${ANSI.muted}${num}  ${ANSI.reset}${dotColor}${dot}${ANSI.reset} ${ANSI.bold}${ANSI.white}${clip(item.name, bodyBudget)}${ANSI.reset}${ANSI.muted}${clip(suffix, Math.max(0, bodyBudget - item.name.length))}${' '.repeat(pad)}${meta}${ANSI.reset}`,
+            text: `${ANSI.subtle}│${ANSI.muted}${num} ${dotColor}${dot}${ANSI.reset} ${ANSI.bold}${ANSI.white}${nameShown}${ANSI.reset}${ANSI.muted}${suffixShown}${pad}${meta}${ANSI.reset}`,
           })
         }
       }
@@ -1474,9 +1543,12 @@ export function renderSidebar({ groups = [], selectedIndex = 0, width = 32, heig
   const statusLine = status
     ? `${ANSI.bgBar}${ANSI.bold}${ANSI.yellow}${padRight(statusText, cols)}${ANSI.reset}`
     : `${ANSI.bgBar}${ANSI.muted}${padRight(statusText, cols)}${ANSI.reset}`
-  const helpLine = `${ANSI.bgBar}${ANSI.gray}${padRight(` ${clip('n:+W s:+S [/]:sz a/c/x q', cols - 2)}`, cols)}${ANSI.reset}`
+  const helpLine = `${ANSI.bgBar}${ANSI.gray}${padRight(` ${clip('h:+H v:+V [/]:sz a/c/x q', cols - 2)}`, cols)}${ANSI.reset}`
 
-  const screen = '\x1b[H\x1b[2J' + [...headerLines, ...renderedBody, `${ANSI.subtle}${'─'.repeat(cols)}${ANSI.reset}`, statusLine, helpLine].join('\r\n')
+  const screen = renderPositionedScreen(
+    [...headerLines, ...renderedBody, `${ANSI.subtle}${'─'.repeat(cols)}${ANSI.reset}`, statusLine, helpLine],
+    rows,
+  )
   return { screen, rowMap, buttonMap: narrowBar.buttonMap }
 }
 
@@ -1680,8 +1752,8 @@ async function main() {
   }
 
   const cleanup = () => {
-    // Disable mouse tracking, show cursor, leave alternate screen
-    process.stdout.write('\x1b[?1006l\x1b[?1000l\x1b[?25h\x1b[?1049l')
+    // Re-enable auto-wrap, disable mouse tracking, show cursor, leave alternate screen
+    process.stdout.write('\x1b[?7h\x1b[?1006l\x1b[?1000l\x1b[?25h\x1b[?1049l')
     if (process.stdin.isTTY) process.stdin.setRawMode(false)
     process.exit(0)
   }
