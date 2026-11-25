@@ -1,0 +1,241 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 56;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		AA0000010000000000000001 /* AILinkRemoteApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB0000010000000000000001 /* AILinkRemoteApp.swift */; };
+		AA0000020000000000000001 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB0000020000000000000001 /* Models.swift */; };
+		AA0000030000000000000001 /* AILinkClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB0000030000000000000001 /* AILinkClient.swift */; };
+		AA0000040000000000000001 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB0000040000000000000001 /* ContentView.swift */; };
+		AA0000050000000000000001 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = BB0000050000000000000001 /* Assets.xcassets */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		BB0000010000000000000001 /* AILinkRemoteApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AILinkRemoteApp.swift; sourceTree = "<group>"; };
+		BB0000020000000000000001 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
+		BB0000030000000000000001 /* AILinkClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AILinkClient.swift; sourceTree = "<group>"; };
+		BB0000040000000000000001 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
+		CC0000010000000000000001 /* AILinkRemote.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = AILinkRemote.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		BB0000050000000000000001 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		DD0000010000000000000001 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		EE0000010000000000000001 = {
+			isa = PBXGroup;
+			children = (
+				EE0000020000000000000001 /* AILinkRemote */,
+				EE0000030000000000000001 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		EE0000020000000000000001 /* AILinkRemote */ = {
+			isa = PBXGroup;
+			children = (
+				BB0000010000000000000001 /* AILinkRemoteApp.swift */,
+				BB0000020000000000000001 /* Models.swift */,
+				BB0000030000000000000001 /* AILinkClient.swift */,
+				BB0000040000000000000001 /* ContentView.swift */,
+				BB0000050000000000000001 /* Assets.xcassets */,
+			);
+			path = AILinkRemote;
+			sourceTree = "<group>";
+		};
+		EE0000030000000000000001 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				CC0000010000000000000001 /* AILinkRemote.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		FF0000010000000000000001 /* AILinkRemote */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = GG0000020000000000000001 /* Build configuration list for PBXNativeTarget "AILinkRemote" */;
+			buildPhases = (
+				HH0000010000000000000001 /* Sources */,
+				DD0000010000000000000001 /* Frameworks */,
+				HH0000020000000000000001 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = AILinkRemote;
+			productName = AILinkRemote;
+			productReference = CC0000010000000000000001 /* AILinkRemote.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		II0000010000000000000001 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 1600;
+				LastUpgradeCheck = 1600;
+			};
+			buildConfigurationList = GG0000010000000000000001 /* Build configuration list for PBXProject "AILinkRemote" */;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = EE0000010000000000000001;
+			productRefGroup = EE0000030000000000000001 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				FF0000010000000000000001 /* AILinkRemote */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXSourcesBuildPhase section */
+		HH0000010000000000000001 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				AA0000010000000000000001 /* AILinkRemoteApp.swift in Sources */,
+				AA0000020000000000000001 /* Models.swift in Sources */,
+				AA0000030000000000000001 /* AILinkClient.swift in Sources */,
+				AA0000040000000000000001 /* ContentView.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXResourcesBuildPhase section */
+		HH0000020000000000000001 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				AA0000050000000000000001 /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		JJ0000010000000000000001 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ENABLE_MODULES = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				SDKROOT = auto;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+			};
+			name = Debug;
+		};
+		JJ0000020000000000000001 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ENABLE_MODULES = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				SDKROOT = auto;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
+				SWIFT_COMPILATION_MODE = wholemodule;
+			};
+			name = Release;
+		};
+		JJ0000030000000000000001 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = 5MQNU85UDL;
+				GENERATE_INFOPLIST_FILE = YES;
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ENABLE_APP_SANDBOX = NO;
+				INFOPLIST_FILE = AILinkRemote/Info.plist;
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				PRODUCT_BUNDLE_IDENTIFIER = com.pauldenchat.AILinkRemote;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		JJ0000040000000000000001 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = 5MQNU85UDL;
+				GENERATE_INFOPLIST_FILE = YES;
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ENABLE_APP_SANDBOX = NO;
+				INFOPLIST_FILE = AILinkRemote/Info.plist;
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				PRODUCT_BUNDLE_IDENTIFIER = com.pauldenchat.AILinkRemote;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		GG0000010000000000000001 /* Build configuration list for PBXProject "AILinkRemote" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				JJ0000010000000000000001 /* Debug */,
+				JJ0000020000000000000001 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		GG0000020000000000000001 /* Build configuration list for PBXNativeTarget "AILinkRemote" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				JJ0000030000000000000001 /* Debug */,
+				JJ0000040000000000000001 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = II0000010000000000000001 /* Project object */;
+}
