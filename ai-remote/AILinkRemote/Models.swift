@@ -65,15 +65,3 @@ struct PromptResponse: Codable {
 struct NudgePayload: Codable {
     let action: String
 }
-
-struct SupabaseSessionRow: Codable {
-    let id: String
-    let machine: String
-    let name: String
-    let cli: String
-    let cwd: String?
-    let pane: String?
-    let watchdog_state: String?
-    let watchdog_reason: String?
-    let pane_output: String?
-}

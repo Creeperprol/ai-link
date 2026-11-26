@@ -63,6 +63,7 @@ struct ContentView: View {
                 }
                 Button("Cancel", role: .cancel) { renamingPeer = nil }
             }
+            .onOpenURL { client.pair(from: $0) }
             .onAppear { client.startPolling() }
             .onDisappear { client.stopPolling() }
         }
@@ -109,7 +110,7 @@ struct ContentView: View {
                         .font(.headline)
                     Text(client.isConnected
                          ? "Start AI sessions in tmux, or open a new one with the + button."
-                         : "Open Settings to set the server and key, and make sure lan.mjs is running.")
+                         : "Open Settings to set the server URL and key, and make sure cloud-agent.mjs is running on your Mac.")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                         .multilineTextAlignment(.center)
@@ -349,39 +350,20 @@ private struct SettingsSheet: View {
     var body: some View {
         NavigationStack {
             Form {
-                Section("Connection Mode") {
-                    Picker("Mode", selection: $client.useSupabase) {
-                        Text("LAN").tag(false)
-                        Text("Supabase").tag(true)
-                    }
-                    .pickerStyle(.segmented)
-                }
-
-                if client.useSupabase {
-                    Section("Supabase") {
-                        TextField("Supabase URL (https://xxx.supabase.co)", text: $client.supabaseURL)
-                            #if os(iOS)
-                            .keyboardType(.URL)
-                            .textInputAutocapitalization(.never)
-                            #endif
-                            .autocorrectionDisabled()
-                        SecureField("Supabase Anon Key", text: $client.supabaseKey)
-                            .autocorrectionDisabled()
-                    }
-                } else {
-                    Section("LAN Server") {
-                        TextField("Server URL (e.g. http://192.168.1.10:47812)", text: $client.serverURL)
-                            #if os(iOS)
-                            .keyboardType(.URL)
-                            .textInputAutocapitalization(.never)
-                            #endif
-                            .autocorrectionDisabled()
-                    }
-                }
-
-                Section("Auth") {
-                    SecureField("LAN Key (~/.ai-link/lan.key)", text: $client.apiKey)
+                Section("Server") {
+                    TextField("Server URL (https://… or http://192.168.1.10:47812)", text: $client.serverURL)
+                        #if os(iOS)
+                        .keyboardType(.URL)
+                        .textInputAutocapitalization(.never)
+                        #endif
                         .autocorrectionDisabled()
+                    SecureField("Access key", text: $client.apiKey)
+                        .autocorrectionDisabled()
+                }
+                Section {
+                    Text("Away from home: use your Cloudflare relay URL and the key in ~/.ai-link/cloud.json on your Mac. On the same Wi-Fi: http://<mac-ip>:47812 and ~/.ai-link/lan.key.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
                 }
             }
             .navigationTitle("Connection")
@@ -395,7 +377,7 @@ private struct SettingsSheet: View {
             }
         }
         #if os(macOS)
-        .frame(minWidth: 360, minHeight: 220)
+        .frame(minWidth: 420, minHeight: 300)
         #endif
     }
 }

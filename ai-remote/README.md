@@ -1,18 +1,34 @@
 # AI Remote (Xcode / SwiftUI)
 
-Control your local and LAN `ai-link` sessions (`claude`, `agy`, `codex`) from macOS or iOS.
+Control your `ai-link` sessions (`claude`, `agy`, `codex`) from macOS or iOS, from anywhere, through a Cloudflare Worker relay.
 
-## 1. Start the LAN & Remote Server on your Mac
-
-```bash
-node link-bridge/lan.mjs key    # prints your LAN key (first time only)
-node link-bridge/lan.mjs        # starts UDP discovery + HTTP remote API on port 47812 + stuck-worker watchdog
+```
+AI Remote app  <->  Cloudflare Worker (ai-remote/cloud)  <->  link-bridge/cloud-agent.mjs on your Mac
 ```
 
-## 2. Open in Xcode
+## 1. Deploy the relay (once)
 
-Open `ai-remote/AILinkRemote.xcodeproj` in Xcode, choose **My Mac** or your **iPhone/iPad**, and run.
+```bash
+cd ai-remote/cloud
+KEY=$(openssl rand -hex 24)
+printf %s "$KEY" | npx wrangler secret put KEY
+npx wrangler deploy                      # prints https://ai-link-relay.<you>.workers.dev
+printf '{"url":"https://ai-link-relay.<you>.workers.dev","key":"%s"}\n' "$KEY" > ~/.ai-link/cloud.json
+chmod 600 ~/.ai-link/cloud.json
+```
 
-In the app's **Settings** (gear icon):
-- **Server URL**: `http://127.0.0.1:47812` (same Mac) or `http://<your-mac-lan-ip>:47812` (from iOS)
-- **LAN Key**: the key printed by `node link-bridge/lan.mjs key`
+## 2. Run the agent on your Mac
+
+```bash
+node link-bridge/cloud-agent.mjs
+```
+
+It pushes your sessions every 3 s and runs the prompts, nudges and spawns the app queues. Sessions need a tmux pane (or a Terminal.app tab) to receive text; viewing a pane needs tmux.
+
+## 3. Open the app
+
+Open `AILinkRemote.xcodeproj`, run on **My Mac** or your iPhone, then in **Settings** set the server URL and access key from `~/.ai-link/cloud.json`. On a phone you can tap a pairing link instead: `ailink://pair?url=<relay url>&key=<key>`.
+
+Debug builds accept a `-mock` launch argument that shows sample sessions.
+
+The key is the only protection on the relay: keep `cloud.json` private and never commit it.

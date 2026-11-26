@@ -9,15 +9,6 @@ final class AILinkClient: ObservableObject {
     @Published var apiKey: String {
         didSet { UserDefaults.standard.set(apiKey, forKey: "ailink_api_key") }
     }
-    @Published var useSupabase: Bool {
-        didSet { UserDefaults.standard.set(useSupabase, forKey: "ailink_use_supabase") }
-    }
-    @Published var supabaseURL: String {
-        didSet { UserDefaults.standard.set(supabaseURL, forKey: "ailink_supabase_url") }
-    }
-    @Published var supabaseKey: String {
-        didSet { UserDefaults.standard.set(supabaseKey, forKey: "ailink_supabase_key") }
-    }
 
     @Published var status: StatusResponse?
     @Published var isConnected = false
@@ -32,10 +23,18 @@ final class AILinkClient: ObservableObject {
     init() {
         self.serverURL = UserDefaults.standard.string(forKey: "ailink_server_url") ?? "http://127.0.0.1:47812"
         self.apiKey = UserDefaults.standard.string(forKey: "ailink_api_key") ?? ""
-        self.useSupabase = UserDefaults.standard.object(forKey: "ailink_use_supabase") as? Bool ?? false
-        self.supabaseURL = UserDefaults.standard.string(forKey: "ailink_supabase_url") ?? ""
-        self.supabaseKey = UserDefaults.standard.string(forKey: "ailink_supabase_key") ?? ""
         self.customNames = UserDefaults.standard.dictionary(forKey: "ailink_custom_names") as? [String: String] ?? [:]
+    }
+
+    /// Handles ailink://pair?url=...&key=... so a phone can be set up by tapping one link.
+    func pair(from link: URL) {
+        guard link.scheme == "ailink", link.host == "pair",
+              let items = URLComponents(url: link, resolvingAgainstBaseURL: false)?.queryItems,
+              let url = items.first(where: { $0.name == "url" })?.value,
+              let key = items.first(where: { $0.name == "key" })?.value else { return }
+        serverURL = url
+        apiKey = key
+        Task { await fetchStatus() }
     }
 
     func displayName(for peer: PeerInfo) -> String {
@@ -86,7 +85,7 @@ final class AILinkClient: ObservableObject {
         guard let url = URL(string: "\(base)\(path)") else {
             throw URLError(.badURL)
         }
-        var req = URLRequest(url: url, timeoutInterval: 5)
+        var req = URLRequest(url: url, timeoutInterval: 10)
         req.httpMethod = method
         req.setValue("Bearer \(apiKey.trimmingCharacters(in: .whitespacesAndNewlines))", forHTTPHeaderField: "Authorization")
         if let body {
@@ -96,79 +95,10 @@ final class AILinkClient: ObservableObject {
         return req
     }
 
-    private func makeSupabaseRequest(path: String, method: String = "GET", body: Data? = nil) throws -> URLRequest {
-        let base = supabaseURL.trimmingCharacters(in: .whitespacesAndNewlines).trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-        guard let url = URL(string: "\(base)\(path)") else { throw URLError(.badURL) }
-        var req = URLRequest(url: url, timeoutInterval: 8)
-        req.httpMethod = method
-        let key = supabaseKey.trimmingCharacters(in: .whitespacesAndNewlines)
-        req.setValue(key, forHTTPHeaderField: "apikey")
-        req.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
-        if let body {
-            req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            req.httpBody = body
-        }
-        return req
-    }
-
-    private func sendSupabaseCommand(targetId: String, action: String, payload: [String: String]) async {
-        let machine = status?.machine ?? ""
-        var fullPayload = payload
-        fullPayload["key"] = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
-        let bodyObj: [String: Any] = [
-            "machine": machine,
-            "target_id": targetId,
-            "action": action,
-            "payload": fullPayload,
-        ]
-        do {
-            let data = try JSONSerialization.data(withJSONObject: bodyObj)
-            let req = try makeSupabaseRequest(path: "/rest/v1/ai_link_commands", method: "POST", body: data)
-            let (_, resp) = try await URLSession.shared.data(for: req)
-            let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
-            lastDeliveryMessage = (200...299).contains(code) ? "Queued \(action) via Supabase" : "Supabase HTTP \(code)"
-        } catch {
-            lastDeliveryMessage = "Supabase error: \(error.localizedDescription)"
-        }
-    }
-
     func fetchStatus() async {
-        if useSupabase {
-            guard !supabaseURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-                  !supabaseKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-                isConnected = false
-                lastError = "Set Supabase URL and Key in Settings"
-                return
-            }
-            do {
-                let req = try makeSupabaseRequest(path: "/rest/v1/ai_link_sessions?select=*&order=updated_at.desc")
-                let (data, resp) = try await URLSession.shared.data(for: req)
-                guard let http = resp as? HTTPURLResponse, http.statusCode == 200 else {
-                    isConnected = false
-                    lastError = "Supabase HTTP \((resp as? HTTPURLResponse)?.statusCode ?? 0)"
-                    return
-                }
-                let rows = try JSONDecoder().decode([SupabaseSessionRow].self, from: data)
-                let peers = rows.map { r in
-                    PeerInfo(
-                        id: r.id, name: r.name, cli: r.cli, cwd: r.cwd ?? "",
-                        remote: false, machine: r.machine, pane: r.pane ?? "",
-                        isHost: false, seen: Date().timeIntervalSince1970 * 1000,
-                        watchdog: WatchdogStatus(state: r.watchdog_state ?? "ok", reason: r.watchdog_reason ?? "", since: nil, snippet: String((r.pane_output ?? "").suffix(200)))
-                    )
-                }
-                status = StatusResponse(machine: rows.first?.machine ?? "Supabase", mid: "supabase", httpPort: 443, peers: peers, tasks: [], updatedAt: Date().timeIntervalSince1970 * 1000)
-                isConnected = true
-                lastError = nil
-            } catch {
-                isConnected = false
-                lastError = error.localizedDescription
-            }
-            return
-        }
         guard !apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             isConnected = false
-            lastError = "Set your LAN key in Settings"
+            lastError = "Set the server URL and key in Settings"
             return
         }
         do {
@@ -192,10 +122,6 @@ final class AILinkClient: ObservableObject {
     func sendPrompt(to target: String, text: String, kind: String) async {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
-        if useSupabase {
-            await sendSupabaseCommand(targetId: target, action: "prompt", payload: ["text": trimmed, "kind": kind])
-            return
-        }
         do {
             let payload = PromptPayload(to: target, text: trimmed, kind: kind, fromName: "remote-app")
             let req = try makeRequest(path: "/api/prompt", method: "POST", body: try JSONEncoder().encode(payload))
@@ -215,17 +141,6 @@ final class AILinkClient: ObservableObject {
     }
 
     func fetchPane(id: String) async -> String {
-        if useSupabase {
-            do {
-                let encoded = id.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? id
-                let req = try makeSupabaseRequest(path: "/rest/v1/ai_link_sessions?id=eq.\(encoded)&select=*")
-                let (data, _) = try await URLSession.shared.data(for: req)
-                let rows = try JSONDecoder().decode([SupabaseSessionRow].self, from: data)
-                return rows.first?.pane_output ?? "(no output yet)"
-            } catch {
-                return "Error: \(error.localizedDescription)"
-            }
-        }
         do {
             let req = try makeRequest(path: "/api/pane/\(id)")
             let (data, resp) = try await URLSession.shared.data(for: req)
@@ -240,10 +155,6 @@ final class AILinkClient: ObservableObject {
     }
 
     func nudge(id: String, action: String) async {
-        if useSupabase {
-            await sendSupabaseCommand(targetId: id, action: "nudge", payload: ["action": action])
-            return
-        }
         do {
             let payload = NudgePayload(action: action)
             let req = try makeRequest(path: "/api/nudge/\(id)", method: "POST", body: try JSONEncoder().encode(payload))
@@ -257,10 +168,6 @@ final class AILinkClient: ObservableObject {
     }
 
     func spawn(cli: String) async {
-        if useSupabase {
-            await sendSupabaseCommand(targetId: "all", action: "spawn", payload: ["cli": cli])
-            return
-        }
         do {
             let body = try JSONEncoder().encode(["cli": cli])
             let req = try makeRequest(path: "/api/spawn", method: "POST", body: body)
