@@ -252,11 +252,13 @@ private struct PeerRow: View {
                 }
             }
 
-            Text(peer.cwd.isEmpty ? "~" : peer.cwd)
-                .font(.caption.monospaced())
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-                .truncationMode(.head)
+            if !peer.cwd.isEmpty {
+                Text(peer.cwd)
+                    .font(.caption.monospaced())
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.head)
+            }
 
             if let snippet = peer.watchdog?.snippet, !snippet.isEmpty {
                 Text(snippet)
@@ -276,27 +278,35 @@ private struct PeerRow: View {
             }
 
             HStack(spacing: 8) {
-                Button(action: onSelect) { Label("Target", systemImage: "scope") }
-                Button(action: onRename) { Label("Rename", systemImage: "pencil") }
                 if !peer.remote && !peer.pane.isEmpty {
-                    Button(action: onInspect) { Label("Terminal", systemImage: "terminal") }
+                    Button(action: onInspect) {
+                        Label("Terminal", systemImage: "terminal")
+                            .lineLimit(1)
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.borderedProminent)
+                } else {
+                    Spacer(minLength: 0)
+                }
+                Button(action: onSelect) { Image(systemName: "scope").frame(minWidth: 22) }
+                    .help("Send prompts here")
+                Button(action: onRename) { Image(systemName: "pencil").frame(minWidth: 22) }
+                    .help("Rename")
+                if !peer.remote && !peer.pane.isEmpty {
                     Menu {
                         Button("Send Enter") { onNudge("enter") }
                         Button("Send Yes (y + Enter)") { onNudge("yes") }
                         Button("Send Esc") { onNudge("esc") }
                         Button("Send Ctrl-C", role: .destructive) { onNudge("ctrl-c") }
                     } label: {
-                        Label("Nudge", systemImage: "hand.tap")
+                        Image(systemName: "hand.tap").frame(minWidth: 22)
                     }
-                    .menuStyle(.borderlessButton)
-                    .fixedSize()
+                    .buttonStyle(.bordered)
                 }
-                Spacer(minLength: 0)
             }
-            .labelStyle(.titleAndIcon)
-            .font(.caption.weight(.medium))
+            .font(.callout.weight(.medium))
             .buttonStyle(.bordered)
-            .controlSize(.small)
+            .controlSize(.regular)
         }
         .padding(12)
         .background(Color.secondary.opacity(0.07), in: RoundedRectangle(cornerRadius: 14))

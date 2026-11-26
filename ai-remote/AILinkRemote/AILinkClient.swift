@@ -56,6 +56,18 @@ final class AILinkClient: ObservableObject {
 
     func startPolling() {
         stopPolling()
+        #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("-mock") {
+            func w(_ st: String, _ r: String, _ sn: String?) -> WatchdogStatus { WatchdogStatus(state: st, reason: r, since: nil, snippet: sn) }
+            status = StatusResponse(machine: "Pauls-MacBook-Pro", mid: "m", httpPort: 47812, peers: [
+                PeerInfo(id: "1", name: "ai-link-9f2c", cli: "claude", cwd: "/Users/pauldenchat/Desktop/Projects/ai-link/ai-remote", remote: false, machine: "mac", pane: "%3", isHost: true, seen: 0, watchdog: w("ok", "", "Edit ContentView.swift\n  ✓ Build succeeded")),
+                PeerInfo(id: "2", name: "agy-worker", cli: "agy", cwd: "/Users/pauldenchat/Projects/retro-pi-zero", remote: false, machine: "mac", pane: "%5", isHost: false, seen: 0, watchdog: w("stuck", "Waiting for approval for 4 min", "Allow this command? (y/n)")),
+                PeerInfo(id: "3", name: "codex-2", cli: "codex", cwd: "", remote: true, machine: "Studio-iMac", pane: "", isHost: false, seen: 0, watchdog: w("rate_limited", "Rate limit hit", nil)),
+            ], tasks: [], updatedAt: 0)
+            isConnected = true
+            return
+        }
+        #endif
         pollTask = Task { [weak self] in
             while !Task.isCancelled {
                 await self?.fetchStatus()
