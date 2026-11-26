@@ -27,7 +27,7 @@ It pushes your sessions every 3 s and runs the prompts, nudges and spawns the ap
 
 ## 3. Open the app
 
-Open `AILinkRemote.xcodeproj`, run on **My Mac** or your iPhone, then in **Settings** set the server URL and access key from `~/.ai-link/cloud.json`. On a phone you can tap a pairing link instead: `ailink://pair?url=<relay url>&key=<key>`.
+Open `AILinkRemote.xcodeproj`, run on **My Mac** or your iPhone, then in **Settings** set the server URL and access key from `~/.ai-link/cloud.json`. On a phone you can tap a pairing link instead: `ailink://pair?url=<relay url>&key=<key>`. To build the app already paired, create the gitignored `AILinkRemote/Local.xcconfig` with `AILINK_CLOUD_URL = https:/$()/<relay host>` and `AILINK_CLOUD_KEY = <key>`; it replaces saved settings that are empty, localhost or the old Supabase relay.
 
 Debug builds accept a `-mock` launch argument that shows sample sessions.
 

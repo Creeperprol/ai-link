@@ -21,8 +21,22 @@ final class AILinkClient: ObservableObject {
     private var pollTask: Task<Void, Never>?
 
     init() {
-        self.serverURL = UserDefaults.standard.string(forKey: "ailink_server_url") ?? "http://127.0.0.1:47812"
-        self.apiKey = UserDefaults.standard.string(forKey: "ailink_api_key") ?? ""
+        // Built-in pairing from Local.xcconfig (via Info.plist). It replaces saved settings that are
+        // empty, localhost or the retired Supabase relay, so an updated build pairs itself.
+        let info = Bundle.main.infoDictionary
+        let bundledURL = (info?["AILinkCloudURL"] as? String ?? "").trimmingCharacters(in: .whitespaces)
+        let bundledKey = (info?["AILinkCloudKey"] as? String ?? "").trimmingCharacters(in: .whitespaces)
+        let savedURL = UserDefaults.standard.string(forKey: "ailink_server_url") ?? ""
+        let savedIsStale = savedURL.isEmpty || savedURL.contains("127.0.0.1") || savedURL.contains("supabase")
+        if !bundledURL.isEmpty, !bundledKey.isEmpty, savedIsStale {
+            self.serverURL = bundledURL
+            self.apiKey = bundledKey
+            UserDefaults.standard.set(bundledURL, forKey: "ailink_server_url")
+            UserDefaults.standard.set(bundledKey, forKey: "ailink_api_key")
+        } else {
+            self.serverURL = savedURL.isEmpty ? "http://127.0.0.1:47812" : savedURL
+            self.apiKey = UserDefaults.standard.string(forKey: "ailink_api_key") ?? ""
+        }
         self.customNames = UserDefaults.standard.dictionary(forKey: "ailink_custom_names") as? [String: String] ?? [:]
     }
 

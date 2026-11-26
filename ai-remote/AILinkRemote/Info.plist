@@ -2,6 +2,10 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<key>AILinkCloudURL</key>
+	<string>$(AILINK_CLOUD_URL)</string>
+	<key>AILinkCloudKey</key>
+	<string>$(AILINK_CLOUD_KEY)</string>
 	<key>CFBundleDisplayName</key>
 	<string>AI Remote</string>
 	<key>CFBundleURLTypes</key>

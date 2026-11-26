@@ -21,6 +21,7 @@
 		BB0000040000000000000001 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		CC0000010000000000000001 /* AILinkRemote.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = AILinkRemote.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		BB0000050000000000000001 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		BB0000060000000000000001 /* Config.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Config.xcconfig; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -50,6 +51,7 @@
 				BB0000030000000000000001 /* AILinkClient.swift */,
 				BB0000040000000000000001 /* ContentView.swift */,
 				BB0000050000000000000001 /* Assets.xcassets */,
+				BB0000060000000000000001 /* Config.xcconfig */,
 			);
 			path = AILinkRemote;
 			sourceTree = "<group>";
@@ -174,6 +176,7 @@
 		};
 		JJ0000030000000000000001 /* Debug */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = BB0000060000000000000001 /* Config.xcconfig */;
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
 				DEVELOPMENT_TEAM = 5MQNU85UDL;
@@ -195,6 +198,7 @@
 		};
 		JJ0000040000000000000001 /* Release */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = BB0000060000000000000001 /* Config.xcconfig */;
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
 				DEVELOPMENT_TEAM = 5MQNU85UDL;

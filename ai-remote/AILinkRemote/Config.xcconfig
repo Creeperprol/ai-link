@@ -1,0 +1,7 @@
+// Pairing defaults for AI Remote. Real values live in the gitignored Local.xcconfig:
+//   AILINK_CLOUD_URL = https:/$()/<relay host>
+//   AILINK_CLOUD_KEY = <key from ~/.ai-link/cloud.json>
+// Without Local.xcconfig the app starts unpaired (set the server in Settings).
+AILINK_CLOUD_URL =
+AILINK_CLOUD_KEY =
+#include? "Local.xcconfig"
