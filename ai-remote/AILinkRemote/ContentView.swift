@@ -19,6 +19,9 @@ struct ContentView: View {
                 Divider()
                 promptComposer
             }
+            #if os(macOS)
+            .frame(minWidth: 520, minHeight: 480)
+            #endif
             .navigationTitle("AI Remote")
             #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
@@ -69,14 +72,16 @@ struct ContentView: View {
         HStack(spacing: 8) {
             Circle()
                 .fill(client.isConnected ? Color.green : Color.red)
-                .frame(width: 10, height: 10)
+                .frame(width: 9, height: 9)
+                .shadow(color: (client.isConnected ? Color.green : Color.red).opacity(0.6), radius: 3)
             if let status = client.status {
-                Text("\(status.machine) • \(status.peers.count) peer(s)")
+                Text("\(status.machine) · \(status.peers.count) session\(status.peers.count == 1 ? "" : "s")")
                     .font(.subheadline.weight(.medium))
             } else {
                 Text(client.lastError ?? "Disconnected")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
+                    .lineLimit(1)
             }
             Spacer()
             Button {
@@ -85,80 +90,106 @@ struct ContentView: View {
                 Image(systemName: "arrow.clockwise")
             }
             .buttonStyle(.borderless)
+            .help("Refresh")
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 8)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+        .background(.bar)
     }
 
     private var peerList: some View {
-        List {
-            let peers = client.status?.peers ?? []
+        let peers = client.status?.peers ?? []
+        return Group {
             if peers.isEmpty {
-                Text("No active peers found. Start lan.mjs and AI sessions in tmux.")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
+                VStack(spacing: 10) {
+                    Image(systemName: "terminal")
+                        .font(.system(size: 34, weight: .light))
+                        .foregroundStyle(.secondary)
+                    Text(client.isConnected ? "No active sessions" : "Not connected")
+                        .font(.headline)
+                    Text(client.isConnected
+                         ? "Start AI sessions in tmux, or open a new one with the + button."
+                         : "Open Settings to set the server and key, and make sure lan.mjs is running.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                        .frame(maxWidth: 320)
+                    if !client.isConnected {
+                        Button("Open Settings") { showSettings = true }
+                            .buttonStyle(.bordered)
+                    }
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .padding(24)
             } else {
-                ForEach(peers) { peer in
-                    PeerRow(
-                        peer: peer,
-                        displayName: client.displayName(for: peer),
-                        onSelect: { selectedTarget = peer.id },
-                        onInspect: { inspectedPeer = peer },
-                        onRename: {
-                            renameText = client.displayName(for: peer)
-                            renamingPeer = peer
-                        },
-                        onNudge: { action in
-                            Task { await client.nudge(id: peer.id, action: action) }
+                ScrollView {
+                    LazyVStack(spacing: 10) {
+                        ForEach(peers) { peer in
+                            PeerRow(
+                                peer: peer,
+                                displayName: client.displayName(for: peer),
+                                isTarget: selectedTarget == peer.id,
+                                onSelect: { selectedTarget = peer.id },
+                                onInspect: { inspectedPeer = peer },
+                                onRename: {
+                                    renameText = client.displayName(for: peer)
+                                    renamingPeer = peer
+                                },
+                                onNudge: { action in
+                                    Task { await client.nudge(id: peer.id, action: action) }
+                                }
+                            )
                         }
-                    )
+                    }
+                    .padding(14)
                 }
             }
         }
-        #if os(iOS)
-        .listStyle(.insetGrouped)
-        #else
-        .listStyle(.inset)
-        #endif
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private var promptComposer: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Text("To:")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
-                Picker("Target", selection: $selectedTarget) {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 10) {
+                Picker("To", selection: $selectedTarget) {
                     Text("All Peers").tag("all")
                     ForEach(client.status?.peers ?? []) { peer in
                         Text("\(client.displayName(for: peer)) (\(peer.cli)\(peer.pane.isEmpty ? "" : " \(peer.pane)"))").tag(peer.id)
                     }
                 }
                 .pickerStyle(.menu)
-                Spacer()
-            }
+                .fixedSize()
 
-            Picker("Mode", selection: $promptKind) {
-                Text("Raw").tag("raw")
-                Text("Message").tag("msg")
-                Text("Task").tag("task")
+                Picker("Mode", selection: $promptKind) {
+                    Text("Raw").tag("raw")
+                    Text("Message").tag("msg")
+                    Text("Task").tag("task")
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .frame(maxWidth: 240)
+                Spacer(minLength: 0)
             }
-            .pickerStyle(.segmented)
 
             HStack(alignment: .bottom, spacing: 8) {
                 TextField("Send prompt to terminal...", text: $promptText, axis: .vertical)
-                    .textFieldStyle(.roundedBorder)
+                    .textFieldStyle(.plain)
                     .lineLimit(1...5)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 9)
+                    .background(Color.secondary.opacity(0.12), in: RoundedRectangle(cornerRadius: 12))
+                    .onSubmit(send)
 
-                Button("Send") {
-                    let text = promptText
-                    promptText = ""
-                    Task {
-                        await client.sendPrompt(to: selectedTarget, text: text, kind: promptKind)
-                    }
+                Button(action: send) {
+                    Image(systemName: "arrow.up")
+                        .font(.body.weight(.bold))
+                        .frame(width: 20, height: 20)
                 }
                 .buttonStyle(.borderedProminent)
+                .clipShape(Circle())
                 .disabled(promptText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !client.isConnected)
+                .keyboardShortcut(.return, modifiers: .command)
+                .help("Send (⌘↩)")
             }
 
             if let msg = client.lastDeliveryMessage {
@@ -167,26 +198,36 @@ struct ContentView: View {
                     .foregroundStyle(.secondary)
             }
         }
-        .padding(12)
+        .padding(14)
+        .background(.bar)
+    }
+
+    private func send() {
+        let text = promptText
+        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, client.isConnected else { return }
+        promptText = ""
+        Task { await client.sendPrompt(to: selectedTarget, text: text, kind: promptKind) }
     }
 }
 
 private struct PeerRow: View {
     let peer: PeerInfo
     let displayName: String
+    let isTarget: Bool
     let onSelect: () -> Void
     let onInspect: () -> Void
     let onRename: () -> Void
     let onNudge: (String) -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 6) {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Circle().fill(cliColor).frame(width: 8, height: 8)
                 Text(displayName)
                     .font(.headline)
                     .lineLimit(1)
                 Text(peer.cli)
-                    .font(.caption.monospaced())
+                    .font(.caption2.monospaced())
                     .padding(.horizontal, 6)
                     .padding(.vertical, 2)
                     .background(cliColor.opacity(0.18))
@@ -198,13 +239,24 @@ private struct PeerRow: View {
                         .foregroundStyle(.secondary)
                 }
                 if peer.remote {
-                    Text(peer.machine)
+                    Label(peer.machine, systemImage: "network")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
-                Spacer()
+                Spacer(minLength: 4)
                 watchdogBadge
+                if isTarget {
+                    Label("Target", systemImage: "scope")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(Color.accentColor)
+                }
             }
+
+            Text(peer.cwd.isEmpty ? "~" : peer.cwd)
+                .font(.caption.monospaced())
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .truncationMode(.head)
 
             if let snippet = peer.watchdog?.snippet, !snippet.isEmpty {
                 Text(snippet)
@@ -212,37 +264,9 @@ private struct PeerRow: View {
                     .foregroundStyle(.secondary)
                     .lineLimit(2)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(6)
+                    .padding(8)
                     .background(Color.secondary.opacity(0.08))
-                    .clipShape(RoundedRectangle(cornerRadius: 6))
-            }
-
-            HStack(spacing: 12) {
-                Text(peer.cwd.isEmpty ? "~" : peer.cwd)
-                    .font(.caption.monospaced())
-                    .foregroundStyle(.secondary)
-                Spacer()
-                Button("Target", action: onSelect)
-                    .font(.caption.weight(.medium))
-                    .buttonStyle(.borderless)
-
-                Button("Rename", action: onRename)
-                    .font(.caption.weight(.medium))
-                    .buttonStyle(.borderless)
-
-                if !peer.remote && !peer.pane.isEmpty {
-                    Button("Terminal", action: onInspect)
-                        .font(.caption.weight(.medium))
-                        .buttonStyle(.borderless)
-
-                    Menu("Nudge") {
-                        Button("Send Enter") { onNudge("enter") }
-                        Button("Send Yes (y + Enter)") { onNudge("yes") }
-                        Button("Send Esc") { onNudge("esc") }
-                        Button("Send Ctrl-C", role: .destructive) { onNudge("ctrl-c") }
-                    }
-                    .font(.caption.weight(.medium))
-                }
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
             }
 
             if let wd = peer.watchdog, wd.state != "ok", !wd.reason.isEmpty {
@@ -250,8 +274,38 @@ private struct PeerRow: View {
                     .font(.caption)
                     .foregroundStyle(.orange)
             }
+
+            HStack(spacing: 8) {
+                Button(action: onSelect) { Label("Target", systemImage: "scope") }
+                Button(action: onRename) { Label("Rename", systemImage: "pencil") }
+                if !peer.remote && !peer.pane.isEmpty {
+                    Button(action: onInspect) { Label("Terminal", systemImage: "terminal") }
+                    Menu {
+                        Button("Send Enter") { onNudge("enter") }
+                        Button("Send Yes (y + Enter)") { onNudge("yes") }
+                        Button("Send Esc") { onNudge("esc") }
+                        Button("Send Ctrl-C", role: .destructive) { onNudge("ctrl-c") }
+                    } label: {
+                        Label("Nudge", systemImage: "hand.tap")
+                    }
+                    .menuStyle(.borderlessButton)
+                    .fixedSize()
+                }
+                Spacer(minLength: 0)
+            }
+            .labelStyle(.titleAndIcon)
+            .font(.caption.weight(.medium))
+            .buttonStyle(.bordered)
+            .controlSize(.small)
         }
-        .padding(.vertical, 4)
+        .padding(12)
+        .background(Color.secondary.opacity(0.07), in: RoundedRectangle(cornerRadius: 14))
+        .overlay(
+            RoundedRectangle(cornerRadius: 14)
+                .stroke(isTarget ? Color.accentColor.opacity(0.7) : Color.secondary.opacity(0.15), lineWidth: isTarget ? 1.5 : 1)
+        )
+        .contentShape(RoundedRectangle(cornerRadius: 14))
+        .onTapGesture(perform: onSelect)
     }
 
     private var cliColor: Color {
