@@ -5,6 +5,7 @@ struct ContentView: View {
     @State private var selectedTarget: String = "all"
     @State private var promptKind: String = "raw"
     @State private var promptText: String = ""
+    @FocusState private var promptFocused: Bool
     @State private var showSettings = false
     @State private var inspectedPeer: PeerInfo?
     @State private var renamingPeer: PeerInfo?
@@ -180,6 +181,21 @@ struct ContentView: View {
                     .padding(.vertical, 9)
                     .background(Color.secondary.opacity(0.12), in: RoundedRectangle(cornerRadius: 12))
                     .onSubmit(send)
+                    .focused($promptFocused)
+
+                #if os(iOS)
+                if promptFocused {
+                    Button {
+                        promptFocused = false
+                    } label: {
+                        Image(systemName: "keyboard.chevron.compact.down")
+                            .frame(width: 20, height: 20)
+                    }
+                    .buttonStyle(.bordered)
+                    .clipShape(Circle())
+                    .accessibilityLabel("Hide keyboard")
+                }
+                #endif
 
                 Button(action: send) {
                     Image(systemName: "arrow.up")
@@ -387,6 +403,7 @@ private struct PaneViewerSheet: View {
     let peer: PeerInfo
     @State private var output = "Loading..."
     @State private var inputText = ""
+    @FocusState private var inputFocused: Bool
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
@@ -395,9 +412,7 @@ private struct PaneViewerSheet: View {
                 ScrollViewReader { proxy in
                     ScrollView(.vertical) {
                         VStack(alignment: .leading, spacing: 0) {
-                            Text(output)
-                                .font(.system(size: 11, design: .monospaced))
-                                .foregroundStyle(Color.white.opacity(0.92))
+                            Text(ANSIText.attributed(output))
                                 .frame(maxWidth: .infinity, alignment: .leading)
                                 .fixedSize(horizontal: false, vertical: true)
                                 .padding(10)
@@ -408,6 +423,9 @@ private struct PaneViewerSheet: View {
                         }
                     }
                     .background(Color.black)
+                    #if os(iOS)
+                    .scrollDismissesKeyboard(.interactively)
+                    #endif
                     .onChange(of: output) { _, _ in
                         withAnimation(.easeOut(duration: 0.15)) {
                             proxy.scrollTo("bottom", anchor: .bottom)
@@ -514,6 +532,19 @@ private struct PaneViewerSheet: View {
                         .textInputAutocapitalization(.never)
                         #endif
                         .autocorrectionDisabled()
+                        .focused($inputFocused)
+
+                    #if os(iOS)
+                    if inputFocused {
+                        Button {
+                            inputFocused = false
+                        } label: {
+                            Image(systemName: "keyboard.chevron.compact.down")
+                        }
+                        .buttonStyle(.bordered)
+                        .accessibilityLabel("Hide keyboard")
+                    }
+                    #endif
 
                     Button("Send") {
                         let text = inputText

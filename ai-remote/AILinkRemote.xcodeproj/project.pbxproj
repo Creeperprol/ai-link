@@ -12,6 +12,7 @@
 		AA0000030000000000000001 /* AILinkClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB0000030000000000000001 /* AILinkClient.swift */; };
 		AA0000040000000000000001 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB0000040000000000000001 /* ContentView.swift */; };
 		AA0000050000000000000001 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = BB0000050000000000000001 /* Assets.xcassets */; };
+		AA0000060000000000000001 /* ANSIText.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB0000070000000000000001 /* ANSIText.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -22,6 +23,7 @@
 		CC0000010000000000000001 /* AILinkRemote.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = AILinkRemote.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		BB0000050000000000000001 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		BB0000060000000000000001 /* Config.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Config.xcconfig; sourceTree = "<group>"; };
+		BB0000070000000000000001 /* ANSIText.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ANSIText.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -50,6 +52,7 @@
 				BB0000020000000000000001 /* Models.swift */,
 				BB0000030000000000000001 /* AILinkClient.swift */,
 				BB0000040000000000000001 /* ContentView.swift */,
+				BB0000070000000000000001 /* ANSIText.swift */,
 				BB0000050000000000000001 /* Assets.xcassets */,
 				BB0000060000000000000001 /* Config.xcconfig */,
 			);
@@ -121,6 +124,7 @@
 				AA0000020000000000000001 /* Models.swift in Sources */,
 				AA0000030000000000000001 /* AILinkClient.swift in Sources */,
 				AA0000040000000000000001 /* ContentView.swift in Sources */,
+				AA0000060000000000000001 /* ANSIText.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
