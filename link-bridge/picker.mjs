@@ -739,7 +739,16 @@ export async function focusSession(item, opts = {}) {
   // Tmux workspace sidebar mode:
   // - If the target pane is already visible in the same window, just focus it (never scramble a multi-pane grid).
   // - Only swap panes when this window is a classic 2-pane sidebar + single-main-pane workspace.
+  // A target in another window of the same session is never swapped in: just select that window.
+  let sameWindow = true
   if (opts.tmuxSidebar && item.pane && opts.selfPane && item.tmuxSession && item.tmuxSession === opts.tmuxSession) {
+    const [selfWin, itemWin] = await Promise.all([
+      run('tmux', ['display-message', '-p', '-t', opts.selfPane, '#{window_id}']),
+      run('tmux', ['display-message', '-p', '-t', item.pane, '#{window_id}']),
+    ])
+    sameWindow = !selfWin.ok || !itemWin.ok || selfWin.stdout.trim() === itemWin.stdout.trim()
+  }
+  if (sameWindow && opts.tmuxSidebar && item.pane && opts.selfPane && item.tmuxSession && item.tmuxSession === opts.tmuxSession) {
     const winPanesRes = await run('tmux', ['list-panes', '-t', opts.selfPane, '-F', '#{pane_id}'])
     const siblingPanes = winPanesRes.stdout.split('\n').map(s => s.trim()).filter(p => p && p !== opts.selfPane)
     if (siblingPanes.includes(item.pane)) {
