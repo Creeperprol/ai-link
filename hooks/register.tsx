@@ -353,7 +353,8 @@ const b64utf16 = (t: string) => {
   for (let i = 0; i < t.length; i++) bin += String.fromCharCode(t.charCodeAt(i) & 255, t.charCodeAt(i) >> 8)
   return btoa(bin)
 }
-// Opens a new PowerShell window (Windows Terminal is not needed) running `claude` in dir. The task travels as base64, so newlines and quotes survive.
+// Opens a new window running `claude` in dir: a Windows Terminal tab when wt is installed (keeps colour),
+// otherwise a plain PowerShell window. The task travels as base64, so newlines and quotes survive.
 async function spawnWindows($: any, dir: string, prompt: string, win: number, opts: SpawnOpts): Promise<string | null> {
   const flags = `${opts.lean === false ? '' : ' --strict-mcp-config --disable-slash-commands'}${opts.model ? ' --model ' + opts.model : ''}`
   const task = prompt ? ` $t` : ''
@@ -364,7 +365,8 @@ async function spawnWindows($: any, dir: string, prompt: string, win: number, op
     prompt ? `$t=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${b64(prompt)}'))` : '',
     `claude${flags}${task}`,
   ].filter(Boolean).join('; ')
-  const outer = `Start-Process wt -ArgumentList '-w','new','powershell','-NoExit','-NoProfile','-EncodedCommand','${b64utf16(inner)}'`
+  const enc = b64utf16(inner)
+  const outer = `if (Get-Command wt -ErrorAction SilentlyContinue) { Start-Process wt -ArgumentList '-w','new','powershell','-NoExit','-NoProfile','-EncodedCommand','${enc}' } else { Start-Process powershell -ArgumentList '-NoExit','-NoProfile','-EncodedCommand','${enc}' }`
   const r = await $.process.run(['powershell', '-NoProfile', '-Command', outer])
   return r.exitCode === 0 ? null : String(r.stderr).trim() || `powershell exited ${r.exitCode}`
 }

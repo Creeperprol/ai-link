@@ -1203,7 +1203,7 @@ test('a name saved for the session is kept over the new default', async ($, on) 
   expect(store.get('peer:aaaa1111-0000')).toMatchObject({ name: 'worker-2' })
 })
 
-test('on Windows a worker opens in a PowerShell window, with no sh or osascript', async ($, on) => {
+test('on Windows a worker opens in Windows Terminal, or a PowerShell window without it, with no sh or osascript', async ($, on) => {
   const calls: string[][] = []
   stand(on, [], new Map())
   on('process.run', (_$: any, e: any) => {
@@ -1217,6 +1217,8 @@ test('on Windows a worker opens in a PowerShell window, with no sh or osascript'
   const r = JSON.stringify(await spawnTask($, 'C:\\work\\me'))
   expect(r).toContain('already working')
   const all = JSON.stringify(calls)
+  expect(all).toContain('Get-Command wt')
+  expect(all).toContain('Start-Process wt')
   expect(all).toContain('Start-Process powershell')
   expect(all).not.toContain('osascript')
   expect(all).not.toContain('pwd -P')
@@ -1247,7 +1249,7 @@ test('on Windows an untrusted folder is refused', async ($, on) => {
   await run($, 'host', '')
   const r = JSON.stringify(await spawnTask($, 'C:\\Other\\x'))
   expect(r).toContain('does not trust')
-  expect(calls.join('')).not.toContain('Start-Process powershell')
+  expect(calls.join('')).not.toContain('Start-Process')
 })
 
 test('on Windows a session records win:<pid> as its address', async ($, on) => {
