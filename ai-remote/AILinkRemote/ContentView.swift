@@ -402,6 +402,9 @@ private struct PaneViewerSheet: View {
     @ObservedObject var client: AILinkClient
     let peer: PeerInfo
     @State private var output = "Loading..."
+    @State private var lines: [AttributedString] = []
+    /// Keep the view pinned to the newest output; turned off when the person scrolls up to read.
+    @State private var follow = true
     @State private var inputText = ""
     @FocusState private var inputFocused: Bool
     @Environment(\.dismiss) private var dismiss
@@ -411,24 +414,43 @@ private struct PaneViewerSheet: View {
             VStack(spacing: 0) {
                 ScrollViewReader { proxy in
                     ScrollView(.vertical) {
-                        VStack(alignment: .leading, spacing: 0) {
-                            Text(ANSIText.attributed(output))
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .fixedSize(horizontal: false, vertical: true)
-                                .padding(10)
-                                .textSelection(.enabled)
+                        LazyVStack(alignment: .leading, spacing: 0) {
+                            ForEach(lines.indices, id: \.self) { i in
+                                Text(lines[i])
+                                    .fixedSize(horizontal: false, vertical: true)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                            }
                             Color.clear
                                 .frame(height: 1)
                                 .id("bottom")
                         }
+                        .padding(10)
+                        .textSelection(.enabled)
                     }
                     .background(Color.black)
                     #if os(iOS)
                     .scrollDismissesKeyboard(.interactively)
                     #endif
-                    .onChange(of: output) { _, _ in
-                        withAnimation(.easeOut(duration: 0.15)) {
-                            proxy.scrollTo("bottom", anchor: .bottom)
+                    // Any drag means the person is reading back: stop jumping to the bottom.
+                    .simultaneousGesture(DragGesture(minimumDistance: 8).onChanged { _ in follow = false })
+                    .overlay(alignment: .bottomTrailing) {
+                        if !follow {
+                            Button {
+                                follow = true
+                                proxy.scrollTo("bottom", anchor: .bottom)
+                            } label: {
+                                Label("Latest", systemImage: "arrow.down.to.line")
+                                    .font(.caption.weight(.semibold))
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .padding(10)
+                        }
+                    }
+                    .onAppear { lines = ANSIText.lines(output) }
+                    .onChange(of: output) { _, newValue in
+                        lines = ANSIText.lines(newValue)
+                        if follow {
+                            DispatchQueue.main.async { proxy.scrollTo("bottom", anchor: .bottom) }
                         }
                     }
                 }

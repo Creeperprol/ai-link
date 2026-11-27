@@ -17,8 +17,22 @@ enum ANSIText {
     static let defaultForeground = Color.white.opacity(0.92)
 
     static func attributed(_ input: String, fontSize: CGFloat = 11) -> AttributedString {
-        var result = AttributedString()
         var style = Style()
+        return attributed(input, fontSize: fontSize, style: &style)
+    }
+
+    /// One AttributedString per line, with colours carried across line breaks, so a long scrollback
+    /// can be drawn lazily row by row.
+    static func lines(_ input: String, fontSize: CGFloat = 11) -> [AttributedString] {
+        var style = Style()
+        return input.split(separator: "\n", omittingEmptySubsequences: false).map { line in
+            let text = attributed(String(line), fontSize: fontSize, style: &style)
+            return text.characters.isEmpty ? AttributedString(" ") : text
+        }
+    }
+
+    static func attributed(_ input: String, fontSize: CGFloat, style: inout Style) -> AttributedString {
+        var result = AttributedString()
         var buffer = ""
         let scalars = Array(input.unicodeScalars)
         var i = 0
