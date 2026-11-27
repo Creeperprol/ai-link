@@ -16,6 +16,8 @@
 
 Pair it with [session-usage](https://github.com/Creeperprol/session-usage) for the usage side pane.
 
+**Picker:** [`PICKER.md`](PICKER.md) shows how to open the session picker, read it, its keys, and how to script it.
+
 **New to tmux?** [`TMUX.md`](TMUX.md) shows how to run your AI sessions in tmux so other sessions can type into them and the AI Remote phone app can show them live: install, keys, workspaces, phone setup, stopping sessions and troubleshooting.
 
 `/spawn` opens a Terminal.app window on macOS and, on Windows, a Windows Terminal tab (a plain PowerShell window when Windows Terminal is not installed); Switch to raises the session's window on both (on Windows by window pid, so tabs of one Windows Terminal window cannot be told apart). The Windows paths are untested; see `link-bridge/README.md`. Load it as a Claude Code mod from this folder.
