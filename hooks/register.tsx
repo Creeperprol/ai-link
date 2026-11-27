@@ -209,30 +209,54 @@ const REPORT_DONE = 'Result sent to the host. DONE: do not call report again. Yo
 const reporting = new Set<string>()
 const RESULT_RE = /\[RESULT (\S+) from="([^"]*)"\]\n([\s\S]*)$/
 
-async function hostRecord($: any): Promise<{ id: string; name: string } | null> {
-  const h = (await $.store.get('host')) as { id: string; name: string } | undefined
-  return h ?? null
+type HostRec = { id: string; name: string }
+
+// Several sessions can host at once: 'hosts' lists them all. 'host' holds the newest one, so a
+// session on an older ai-link (which reads only 'host') still takes its tasks.
+async function hostRecords($: any): Promise<HostRec[]> {
+  const list = ((await $.store.get('hosts')) as HostRec[] | undefined) ?? []
+  const legacy = (await $.store.get('host')) as HostRec | undefined
+  const out: HostRec[] = []
+  for (const h of [...(Array.isArray(list) ? list : []), ...(legacy ? [legacy] : [])]) {
+    if (h && typeof h.id === 'string' && !out.some(x => x.id === h.id)) out.push({ id: h.id, name: String(h.name ?? h.id) })
+  }
+  return out
 }
 
-// Host-ness lives in the shared host record, and is judged against the live session id so the
+// The host record with this session id, or null when that session is not a host.
+async function hostById($: any, id: string): Promise<HostRec | null> {
+  return (await hostRecords($)).find(h => h.id === id) ?? null
+}
+
+// For messages: the host list as JSON.
+const hostRecord = async ($: any) => {
+  const l = await hostRecords($)
+  return l.length ? l : null
+}
+
+// 'all' and 'auto' never pick another host: several hosts can run side by side.
+async function workersOnly($: any, list: Peer[]): Promise<Peer[]> {
+  const hosts = await hostRecords($)
+  return list.filter(p => !hosts.some(h => h.id === p.id))
+}
+
+// Host-ness lives in the shared host records, and is judged against the live session id so the
 // pane and the tools always agree, even if the cached identity is stale (after /clear or a reload).
 async function isHost($: any, who: Me | null): Promise<boolean> {
   if (!who) return false
-  const h = await hostRecord($)
-  if (h === null) return false
   const live = String(await $.session.id())
-  return h.id === live
+  return (await hostById($, live)) !== null
 }
 
 const HANDOFF_MS = 60 * 1000
 
 // Takes the note a just-ended session left for its /clear successor, if it is recent and from this folder.
-async function takeHandoff($: any, cwd: string): Promise<{ name: string; host: boolean } | null> {
+async function takeHandoff($: any, cwd: string): Promise<{ name: string; host: boolean; fromId: string } | null> {
   const h = (await $.store.get('handoff')) as { fromId: string; name: string; cwd: string; host: boolean; at: number } | undefined
   if (!h) return null
   await $.store.delete('handoff')
   if (h.cwd !== cwd || (await $.clock.now()) - h.at > HANDOFF_MS) return null
-  return { name: h.name, host: h.host }
+  return { name: h.name, host: h.host, fromId: h.fromId }
 }
 
 // Turns host mode on or off; shared by the /host command and the pane (a plugin's own
@@ -245,16 +269,14 @@ async function multiWindowHook($: any, e: any, next: any) {
     const who = await getMe($)
     if (!who) return r
     const live = String(await $.session.id())
-    const rec = await hostRecord($)
-    const hostAlive = !!rec && rec.id !== live && (await listPeers($, live)).some(p => p.id === rec.id)
     const holdsTask = (await read($, inbox)).length > 0
     if (holdsTask) {
       note = 'ai-link: this session holds a task from a host, so it is a WORKER: follow the worker rules above and do not delegate.'
-    } else if (hostAlive) {
-      note = `ai-link: another running session ("${rec!.name}") is the host, so this session did not take the host role. Delegation tools will refuse here; tell the person to run /host in this window if they want it to be the host.`
     } else {
-      if (!rec || rec.id !== live) await setHost($, who, true)
-      note = 'ai-link is ON and this session is now the HOST (set automatically by this skill). Tmux-only rule: use ONLY AI sessions running inside tmux by default (via tmux grid/panes and tmux peers); do not target non-tmux sessions or spawn loose Terminal windows outside tmux unless the user explicitly asks. Before delegating, load the tools with ToolSearch: select:mcp__ai-link__peers,mcp__ai-link__spawn,mcp__ai-link__assign,mcp__ai-link__rename,mcp__ai-link__command (and mcp__link__link_* for tmux grid/cross-CLI workers). Address workers by the exact names `peers` / `link_peers` lists; never use "all" or "auto" unless the person asked. If peers shows no workers you are STILL the host: never do the task yourself. Use the number of workers the person gave (ask once if none), open exactly that many in tmux (link-grid.sh or tmux panes), then assign.'
+      if (!(await isHost($, who))) await setHost($, who, true)
+      const peers = await listPeers($, live)
+      const others = (await hostRecords($)).filter(h => h.id !== live && peers.some(p => p.id === h.id)).map(h => `"${h.name}"`)
+      note = `ai-link is ON and this session is now a HOST (set automatically by this skill)${others.length ? `; ${others.join(', ')} ${others.length > 1 ? 'are' : 'is'} also hosting, so do not assign work to ${others.length > 1 ? 'them' : 'it'}` : ''}.` + ' Tmux-only rule: use ONLY AI sessions running inside tmux by default (via tmux grid/panes and tmux peers); do not target non-tmux sessions or spawn loose Terminal windows outside tmux unless the user explicitly asks. Before delegating, load the tools with ToolSearch: select:mcp__ai-link__peers,mcp__ai-link__spawn,mcp__ai-link__assign,mcp__ai-link__rename,mcp__ai-link__command (and mcp__link__link_* for tmux grid/cross-CLI workers). Address workers by the exact names `peers` / `link_peers` lists; never use "all" or "auto" unless the person asked. If peers shows no workers you are STILL a host: never do the task yourself. Use the number of workers the person gave (ask once if none), open exactly that many in tmux (link-grid.sh or tmux panes), then assign.'
     }
   } catch {
     return r
@@ -262,16 +284,18 @@ async function multiWindowHook($: any, e: any, next: any) {
   return { ...r, text: `${r.text}\n\n---\n${note}` }
 }
 
-async function setHost($: any, who: Me, isOn: boolean) {
+// Adds this session to the hosts (others stay hosts) or removes it. `replaces` is the session this
+// one took over from (after /clear), dropped from the list. Hosts whose session has ended are dropped too.
+async function setHost($: any, who: Me, isOn: boolean, replaces = '') {
   const live = String(await $.session.id())
   const mine: Me = { id: live, name: who.name }
   await update($, role, () => (isOn ? 'host' : 'solo') as Role)
-  if (isOn) {
-    await $.store.set('host', { id: mine.id, name: mine.name })
-  } else {
-    const h = await hostRecord($)
-    if (h && h.id === mine.id) await $.store.delete('host')
-  }
+  const running = new Set((await listPeers($, live)).map(p => p.id))
+  const kept = (await hostRecords($)).filter(h => h.id !== mine.id && h.id !== replaces && running.has(h.id))
+  const list = isOn ? [...kept, { id: mine.id, name: mine.name }] : kept
+  await $.store.set('hosts', list)
+  if (list.length) await $.store.set('host', list[list.length - 1])
+  else await $.store.delete('host')
   // Read it back: if the record did not take, say so rather than showing a host that is not.
   if ((await isHost($, mine)) !== isOn) $.ui.toast(`ai-link: could not ${isOn ? 'become' : 'leave'} host`)
   $.ui.invalidate('ui.render')
@@ -719,7 +743,7 @@ export const register: Register = (on, options) => {
     const who: Me = { id, name }
     await update($, me, () => who)
     await announce($, who, cwd)
-    if (carried?.host) await setHost($, who, true)
+    if (carried?.host) await setHost($, who, true, carried.fromId)
     startPaneTimer($, true)
 
     const refused: string[] = []
@@ -825,7 +849,9 @@ export const register: Register = (on, options) => {
       return { text: 'No longer hosting.' }
     }
     await setHost($, who, true)
-    return { text: `${who.name} is the host. Give work with /assign <session|all> <task>, or ask me to delegate.` }
+    const live = String(await $.session.id())
+    const others = (await hostRecords($)).filter(h => h.id !== live).map(h => h.name)
+    return { text: `${who.name} is a host${others.length ? ` (with ${others.join(', ')})` : ''}. Give work with /assign <session|all> <task>, or ask me to delegate.` }
   })
 
   on('command.run', { command: 'assign' }, async ($, e) => {
@@ -836,7 +862,7 @@ export const register: Register = (on, options) => {
     const text = rest.join(' ')
     if (!target || !text) return { text: 'Usage: /assign <session name|auto|all> <task> (auto = the least-loaded worker)' }
     const list = await listPeers($, who.id)
-    const chosen = target === 'all' ? list : target === 'auto' ? await leastLoaded($, list) : pick(list, target)
+    const chosen = target === 'all' ? await workersOnly($, list) : target === 'auto' ? await leastLoaded($, await workersOnly($, list)) : pick(list, target)
     if (chosen.length === 0) return { text: `No session matches "${target}". Try /sessions.` }
     if (target !== 'all' && chosen.length > 1) return { text: `"${target}" is ambiguous: ${chosen.map(p => p.name).join(', ')}` }
     const out: string[] = []
@@ -920,7 +946,7 @@ export const register: Register = (on, options) => {
 
   on('tool.call', { tool: T_ASSIGN }, async ($, e) => {
     const who = await getMe($)
-    if (!(await isHost($, who))) return { result: `This session is not the host (host record: ${JSON.stringify(await hostRecord($))}). The person must run /host first.` }
+    if (!(await isHost($, who))) return { result: `This session is not a host (hosts: ${JSON.stringify(await hostRecord($))}). The person must run /host first.` }
     const input = e as unknown as { worker?: string; task?: string; include_non_tmux?: boolean }
     const worker = String(input.worker ?? '')
     const task = String(input.task ?? '')
@@ -928,7 +954,7 @@ export const register: Register = (on, options) => {
     const includeNonTmux = Boolean(input.include_non_tmux)
     const all = await listPeers($, who.id)
     const { list } = tmuxScopedPeers(all, await paneOf($), includeNonTmux)
-    const chosen = worker === 'all' ? list : worker === 'auto' ? await leastLoaded($, list) : pick(list, worker)
+    const chosen = worker === 'all' ? await workersOnly($, list) : worker === 'auto' ? await leastLoaded($, await workersOnly($, list)) : pick(list, worker)
     if (chosen.length === 0) {
       if (worker !== 'all' && worker !== 'auto' && !includeNonTmux) {
         const nonTmux = pick(all, worker)
@@ -947,7 +973,7 @@ export const register: Register = (on, options) => {
 
   on('tool.call', { tool: T_SPAWN }, async ($, e) => {
     const who = await getMe($)
-    if (!who || !(await isHost($, who))) return { result: `This session is not the host (host record: ${JSON.stringify(await hostRecord($))}). The person must run /host first.` }
+    if (!who || !(await isHost($, who))) return { result: `This session is not a host (hosts: ${JSON.stringify(await hostRecord($))}). The person must run /host first.` }
     const input = e as unknown as { dir?: string; prompt?: string; task?: string; model?: string; difficulty?: string; limit?: number | string; lean?: boolean | string }
     const dir = String(input.dir ?? '').trim() || (await $.session.cwd()) || '.'
     const task = String(input.task ?? '').trim()
@@ -965,7 +991,7 @@ export const register: Register = (on, options) => {
 
   on('tool.call', { tool: T_COMMAND }, async ($, e) => {
     const who = await getMe($)
-    if (!who || !(await isHost($, who))) return { result: 'This session is not the host. The person must run /host first.' }
+    if (!who || !(await isHost($, who))) return { result: 'This session is not a host. The person must run /host first.' }
     const input = e as unknown as { worker?: string; command?: string }
     const worker = String(input.worker ?? '')
     const line = String(input.command ?? '')
@@ -975,7 +1001,7 @@ export const register: Register = (on, options) => {
 
   on('tool.call', { tool: T_RENAME }, async ($, e) => {
     const who = await getMe($)
-    if (!who || !(await isHost($, who))) return { result: `This session is not the host (host record: ${JSON.stringify(await hostRecord($))}). The person must run /host first.` }
+    if (!who || !(await isHost($, who))) return { result: `This session is not a host (hosts: ${JSON.stringify(await hostRecord($))}). The person must run /host first.` }
     const input = e as unknown as { worker?: string; name?: string }
     const worker = String(input.worker ?? '')
     const name = cleanName(String(input.name ?? ''))
@@ -1113,8 +1139,8 @@ export const register: Register = (on, options) => {
     // A task a host put in this window's first prompt (spawn with a task) is taken like one received, and keeps the worker silent.
     try {
       const task = TASK_RE.exec(String((e as { text?: string }).text ?? ''))
-      const h = task ? await hostRecord($) : null
-      if (task && h && h.id === task[2]) {
+      const h = task ? await hostById($, task[2]) : null
+      if (task && h) {
         const item: Inbox = { id: task[1], hostId: task[2], hostName: task[3], text: task[4].split('\n\nWhen you are finished')[0] }
         await update($, inbox, l => (l.some(i => i.id === item.id) ? l : [...l, item].slice(-30)))
         await remember($, { at: await $.clock.now(), dir: 'in', who: `task ${item.id}`, text: item.text.slice(0, 300) })
@@ -1148,8 +1174,8 @@ export const register: Register = (on, options) => {
         const cmd = COMMAND_RE.exec(e.text)
         if (task) {
           // A task is only taken from the session registered as the host.
-          const h = await hostRecord($)
-          if (h && h.id === task[2]) {
+          const h = await hostById($, task[2])
+          if (h) {
             const item: Inbox = { id: task[1], hostId: task[2], hostName: task[3], text: task[4].split('\n\nWhen you are finished')[0] }
             await update($, inbox, l => [...l, item].slice(-30))
             await remember($, { at: now, dir: 'in', who: `task ${item.id}`, text: item.text.slice(0, 300) })
@@ -1162,14 +1188,14 @@ export const register: Register = (on, options) => {
           }
         } else if (cmd) {
           // A command is only taken from the session registered as the host, and only from the allowlist.
-          const h = await hostRecord($)
+          const h = await hostById($, cmd[1])
           const parsed = parseWorkerCommand(cmd[2])
-          if (h && h.id === cmd[1] && parsed && DESTRUCTIVE_COMMANDS.has(parsed.command) && (await read($, inbox)).length > 0) {
+          if (h && parsed && DESTRUCTIVE_COMMANDS.has(parsed.command) && (await read($, inbox)).length > 0) {
             await remember($, { at: now, dir: 'in', who: h.name, text: `refused /${parsed.command}: an unfinished task is still open` })
             $.ui.toast(`Refused /${parsed.command} from ${h.name}: finish the open task first`)
             return { consumed: 'command refused' }
           }
-          if (h && h.id === cmd[1] && parsed) {
+          if (h && parsed) {
             await $.command.run({ command: parsed.command, args: parsed.args })
             await remember($, { at: now, dir: 'in', who: h.name, text: `ran /${parsed.command} ${parsed.args}`.trim() })
             $.ui.toast(`${h.name} ran /${parsed.command} ${parsed.args}`.trim())
@@ -1177,10 +1203,10 @@ export const register: Register = (on, options) => {
           }
         } else if (rename) {
           // A rename is only taken from the session registered as the host.
-          const h = await hostRecord($)
+          const h = await hostById($, rename[1])
           const name = cleanName(rename[2])
           const who = await getMe($)
-          if (h && h.id === rename[1] && name && who) {
+          if (h && name && who) {
             await $.command.run({ command: 'rename', args: name })
             const renamed: Me = { id: who.id, name }
             await $.store.set(`name:${who.id}`, renamed.name)
@@ -1477,7 +1503,7 @@ export const register: Register = (on, options) => {
                     const task = text.trim()
                     if (!task || !who) return
                     if (myRole !== 'host') await setHost($, who, true)
-                    const chosen = pickedId === 'all' ? list : list.filter(p => p.id === pickedId)
+                    const chosen = pickedId === 'all' ? await workersOnly($, list) : list.filter(p => p.id === pickedId)
                     let ok = 0
                     for (const p of chosen) if (!(await assign($, who, p, task))) ok += 1
                     $.ui.toast(ok ? `Sent to ${ok} session${ok === 1 ? '' : 's'}` : 'Nothing was delivered')

@@ -72,8 +72,15 @@ test('sessions of different CLIs find each other, hand out work and report back'
 
   // only the host may assign
   assert.equal((await codex.tool('link_assign', { worker: 'all', task: 'x' })).isError, true)
-  assert.match((await host.tool('link_host')).text, /boss is the host/)
-  assert.equal((await qwen.tool('link_host')).isError, true)
+  assert.match((await host.tool('link_host')).text, /boss is a host\./)
+  // several sessions can host at once
+  assert.match((await qwen.tool('link_host')).text, /quinn is a host \(with boss\)/)
+  assert.match((await codex.tool('link_peers')).text, /Hosts: (boss, quinn|quinn, boss)\./)
+  assert.match((await host.tool('link_peers')).text, /\(host\)\. Other hosts: quinn\./)
+  assert.ok(fs.existsSync(path.join(HOME, 'hosts')))
+  assert.match((await qwen.tool('link_host', { on: false })).text, /No longer hosting/)
+  assert.equal((await qwen.tool('link_assign', { worker: 'coder', task: 'x' })).isError, true)
+  assert.match((await codex.tool('link_peers')).text, /Host: boss\./)
 
   const out = (await host.tool('link_assign', { worker: 'all', task: 'say hi' })).text
   assert.match(out, /coder/)
@@ -118,7 +125,7 @@ test('an Antigravity (agy) session takes a task from a Claude host and reports b
   for (const s of [host, agy]) await s.init()
   await new Promise(r => setTimeout(r, 300))
   assert.match((await host.tool('link_peers')).text, /agy-worker-1\s+\[agy\]/)
-  assert.match((await host.tool('link_host', { on: true })).text, /is the host/)
+  assert.match((await host.tool('link_host', { on: true })).text, /is a host/)
   const assigned = await host.tool('link_assign', { worker: 'agy-worker-1', task: 'what is 17 times 23?' })
   const id = /\((t[0-9a-f]+)\)/.exec(assigned.text)[1]
   const got = await agy.tool('link_inbox', { wait_seconds: 3 })
@@ -428,6 +435,24 @@ test('picker.mjs merges Claude, Codex and agy sessions from bridge, tmux and pro
   const res = await focusSession(flat[0], { logFile })
   assert.equal(res.ok, true)
   assert.match(fs.readFileSync(logFile, 'utf8'), /claude-host/)
+})
+
+test('hosts.mjs keeps several hosts at once and still reads the old host.json', async () => {
+  const { readHosts, addHost, removeHost, hostIds } = await import('./hosts.mjs')
+  const { buildSessionGroups } = await import('./picker.mjs')
+  const h = fs.mkdtempSync(path.join(os.tmpdir(), 'hosts-'))
+  fs.writeFileSync(path.join(h, 'host.json'), JSON.stringify({ id: 'old', name: 'old-host' }))
+  addHost(h, 'a', 'host-a')
+  addHost(h, 'b', 'host-b')
+  assert.deepEqual([...hostIds(h)].sort(), ['a', 'b', 'old'])
+  removeHost(h, 'old')
+  removeHost(h, 'a')
+  assert.deepEqual(readHosts(h), [{ id: 'b', name: 'host-b' }])
+  const { flat } = buildSessionGroups({
+    now: 1, hostIds: ['x', 'y'],
+    bridgePeers: ['x', 'y', 'z'].map((id, i) => ({ id, name: `claude-${id}`, cli: 'claude', cwd: `/w/${id}`, pid: 10 + i, tty: `ttys0${i}`, pane: '', seen: 1 })),
+  })
+  assert.deepEqual(flat.filter(i => i.isHost).map(i => i.id).sort(), ['x', 'y'])
 })
 
 test('picker.mjs never labels a tmux pane with a version-number window name (Claude Code renames its window to e.g. 2.1.332)', async () => {

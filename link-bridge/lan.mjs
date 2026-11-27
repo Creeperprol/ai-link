@@ -18,6 +18,7 @@ import path from 'node:path'
 import http from 'node:http'
 import dgram from 'node:dgram'
 import crypto from 'node:crypto'
+import { hostIds } from './hosts.mjs'
 
 const HOME = process.env.LINK_HOME || path.join(os.homedir(), '.ai-link')
 const UDP_PORT = Number(process.env.LINK_LAN_UDP) || 47811
@@ -112,13 +113,13 @@ const MID = (() => {
 const MACHINE = (os.hostname() || 'machine').replace(/\.local$/, '').slice(0, 40)
 
 const localPeers = () => {
-  const host = readJson(dir('host.json'))
+  const hosts = hostIds(HOME)
   const out = []
   for (const f of fs.readdirSync(dir('peers'))) {
     if (!f.endsWith('.json')) continue
     const p = readJson(dir('peers', f))
     if (!p || p.remote || Date.now() - p.seen > STALE_MS || !alive(p.pid)) continue
-    out.push({ id: p.id, name: p.name, cli: p.cli, cwd: path.basename(p.cwd || ''), isHost: host?.id === p.id })
+    out.push({ id: p.id, name: p.name, cli: p.cli, cwd: path.basename(p.cwd || ''), isHost: hosts.has(p.id) })
   }
   return out
 }

@@ -7,6 +7,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { execFile } from 'node:child_process'
 import { chatText, chunkText } from './chat.mjs'
+import { hostIds } from './hosts.mjs'
 
 const HOME = path.join(os.homedir(), '.ai-link')
 const cfg = JSON.parse(fs.readFileSync(process.env.LINK_CLOUD_CONFIG || path.join(HOME, 'cloud.json'), 'utf8'))
@@ -27,7 +28,7 @@ const CLIS = { claude: 'claude', codex: 'codex', agy: 'agy' }
 
 const localPeers = () => {
   const dir = path.join(HOME, 'peers')
-  const host = readJson(path.join(HOME, 'host.json'))
+  const hosts = hostIds(HOME)
   const wd = readJson(path.join(HOME, 'watchdog.json'))
   const wdFresh = wd && Date.now() - wd.updatedAt < 30000 ? wd.peers || {} : {}
   const out = []
@@ -37,7 +38,7 @@ const localPeers = () => {
     out.push({
       id: p.id, name: p.name || p.id.slice(0, 8), cli: p.cli || 'claude', cwd: p.cwd || '',
       remote: false, machine: MACHINE, pane: p.pane || '', tty: p.tty || '', cliPid: Array.isArray(p.chain) ? p.chain[0] : 0,
-      isHost: !!host && host.id === p.id, seen: p.seen || Date.now(),
+      isHost: hosts.has(p.id), seen: p.seen || Date.now(),
       watchdog: wdFresh[p.id] || null,
     })
   }

@@ -17,6 +17,7 @@ import { execFile, execFileSync, spawn } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { winFocus } from './proc.mjs'
 import { detectModel, shortModel } from './model.mjs'
+import { readHosts } from './hosts.mjs'
 
 const DEFAULT_HOME = process.env.LINK_HOME || path.join(os.homedir(), '.ai-link')
 const FRESH_MS = 60_000
@@ -365,15 +366,11 @@ export const readBridgePeers = (home = DEFAULT_HOME, now = Date.now()) => {
   try {
     files = fs.readdirSync(peersDir)
   } catch {
-    return { peers: [], hostId: null }
+    return { peers: [], hostId: null, hostIds: [] }
   }
-  let hostId = null
-  try {
-    const h = JSON.parse(fs.readFileSync(path.join(home, 'host.json'), 'utf8'))
-    if (h && typeof h.id === 'string') hostId = h.id
-  } catch {
-    // no host
-  }
+  // Several sessions can host at once (hosts/<id>.json, plus the old host.json).
+  const hostIds = readHosts(home).map(h => h.id)
+  const hostId = hostIds[0] || null
   const peers = []
   for (const f of files) {
     if (!f.endsWith('.json')) continue
@@ -399,7 +396,7 @@ export const readBridgePeers = (home = DEFAULT_HOME, now = Date.now()) => {
       // skip corrupt peer file
     }
   }
-  return { peers, hostId }
+  return { peers, hostId, hostIds }
 }
 
 // Collects open terminal AI processes, tmux panes, and process elapse times in parallel.
@@ -508,6 +505,7 @@ export async function probeSystem() {
 export function buildSessionGroups({
   bridgePeers = [],
   hostId = null,
+  hostIds = [],
   procWindows = [],
   tmuxPanes = [],
   etimes = new Map(),
@@ -569,7 +567,7 @@ export function buildSessionGroups({
         tmuxSession: tp.session,
         tmuxWindow: tp.windowIndex,
         tmuxActive: tp.paneActive && tp.windowActive,
-        isHost: Boolean(hostId && row.id === hostId),
+        isHost: Boolean((hostId && row.id === hostId) || hostIds.includes(row.id)),
         isCurrent: Boolean(selfPane && row.pane === selfPane),
         remote: row.remote,
         machine: row.machine,
@@ -602,7 +600,7 @@ export function buildSessionGroups({
         tmuxSession: '',
         tmuxWindow: -1,
         tmuxActive: false,
-        isHost: Boolean(hostId && row.id === hostId),
+        isHost: Boolean((hostId && row.id === hostId) || hostIds.includes(row.id)),
         isCurrent: Boolean(selfTty && tty === selfTty),
         remote: row.remote,
         machine: row.machine,
@@ -727,10 +725,10 @@ export async function discoverSessions({
   agyDir,
 } = {}) {
   const now = Date.now()
-  const { peers, hostId } = readBridgePeers(home, now)
+  const { peers, hostId, hostIds } = readBridgePeers(home, now)
   const { procWindows, tmuxPanes, etimes } = await probeSystem()
   const pastSessions = includePast ? readPastSessions({ claudeDir, codexDir, agyDir, limitPerCli }) : []
-  const result = buildSessionGroups({ bridgePeers: peers, hostId, procWindows, tmuxPanes, etimes, pastSessions, selfPane, selfTty, now })
+  const result = buildSessionGroups({ bridgePeers: peers, hostId, hostIds, procWindows, tmuxPanes, etimes, pastSessions, selfPane, selfTty, now })
   // Current model of each live session: the CLI process is the pane's AI process, else the bridge server's parent.
   await Promise.all(result.flat.map(async item => {
     if (item.isPast || item.remote || !['claude', 'codex', 'agy'].includes(item.cli)) return

@@ -773,7 +773,7 @@ test('loading the multi-window skill makes a free session the host and names the
   await $.session.start({ source: 'startup', cwd: '/work/me' } as any)
   const r = JSON.stringify(await skillRun($, 'multi-window'))
   expect(r).toContain('BASE PROMPT')
-  expect(r).toContain('now the HOST')
+  expect(r).toContain('now a HOST')
   expect(r).toContain('mcp__ai-link__spawn')
   expect(store.get('host')).toMatchObject({ id: 'aaaa1111-0000' })
 })
@@ -784,7 +784,7 @@ test('the bundled skill (ai-link:multi-window) also makes a free session the hos
   on('skill.prompt', (_$: any, e: any) => ({ text: e.text }))
   await $.session.start({ source: 'startup', cwd: '/work/me' } as any)
   const r = JSON.stringify(await skillRun($, 'ai-link:multi-window'))
-  expect(r).toContain('now the HOST')
+  expect(r).toContain('now a HOST')
   expect(store.get('host')).toMatchObject({ id: 'aaaa1111-0000' })
 })
 
@@ -793,11 +793,11 @@ test('a host record whose session is gone is replaced when the skill loads', asy
   stand(on, [], store)
   on('skill.prompt', (_$: any, e: any) => ({ text: e.text }))
   await $.session.start({ source: 'startup', cwd: '/work/me' } as any)
-  expect(JSON.stringify(await skillRun($, 'multi-window'))).toContain('now the HOST')
+  expect(JSON.stringify(await skillRun($, 'multi-window'))).toContain('now a HOST')
   expect(store.get('host')).toMatchObject({ id: 'aaaa1111-0000' })
 })
 
-test('the skill never takes the host role from a running host', async ($, on) => {
+test('the skill makes this session a second host beside a running host, which stays a host', async ($, on) => {
   const store = new Map<string, unknown>([
     ['host', { id: 'bbbb2222-0000', name: 'boss' }],
     ['peer:bbbb2222-0000', { ...OTHER, name: 'boss' }], // the host is still running
@@ -806,7 +806,41 @@ test('the skill never takes the host role from a running host', async ($, on) =>
   on('skill.prompt', (_$: any, e: any) => ({ text: e.text }))
   await $.session.start({ source: 'startup', cwd: '/work/me' } as any)
   const r = JSON.stringify(await skillRun($, 'multi-window'))
-  expect(r).toContain('another running session')
+  expect(r).toContain('now a HOST')
+  expect(r).toContain('\\"boss\\" is also hosting')
+  expect((store.get('hosts') as any[]).map(h => h.id)).toEqual(['bbbb2222-0000', 'aaaa1111-0000'])
+})
+
+test('several hosts at once: a worker takes a task from each and reports to the one that sent it', async ($, on) => {
+  const sent: any[] = []
+  const store = new Map<string, unknown>([
+    ['hosts', [{ id: 'hhhh0000', name: 'boss' }, { id: 'kkkk0000', name: 'boss2' }]],
+    ['host', { id: 'kkkk0000', name: 'boss2' }],
+  ])
+  stand(on, sent, store)
+  await $.session.start({ source: 'startup', cwd: '/work/me' } as any)
+  await $.session.receive({ origin: { kind: 'peer' }, text: '[TASK a1 host=hhhh0000 name="boss"]\none' } as any)
+  await $.session.receive({ origin: { kind: 'peer' }, text: '[TASK a2 host=kkkk0000 name="boss2"]\ntwo' } as any)
+  await $.session.receive({ origin: { kind: 'peer' }, text: '[TASK a3 host=evil name="evil"]\nthree' } as any)
+  expect(JSON.stringify(await $.tool.call({ tool: 'mcp__ai-link__report', task_id: 'a3', result: 'x' } as any))).toContain('No task a3')
+  await $.tool.call({ tool: 'mcp__ai-link__report', task_id: 'a1', result: 'r1' } as any)
+  await $.tool.call({ tool: 'mcp__ai-link__report', task_id: 'a2', result: 'r2' } as any)
+  expect(sent).toHaveLength(2)
+  expect(JSON.stringify(sent[0].to)).toContain('hhhh0000')
+  expect(JSON.stringify(sent[1].to)).toContain('kkkk0000')
+})
+
+test('/host adds this session beside a running host, and /host off leaves the other hosting', async ($, on) => {
+  const store = new Map<string, unknown>([
+    ['host', { id: 'bbbb2222-0000', name: 'boss' }],
+    ['peer:bbbb2222-0000', { ...OTHER, name: 'boss' }],
+  ])
+  stand(on, [], store)
+  await $.session.start({ source: 'startup', cwd: '/work/me' } as any)
+  expect(JSON.stringify(await run($, 'host', ''))).toContain('is a host (with boss)')
+  expect((store.get('hosts') as any[]).map(h => h.id)).toEqual(['bbbb2222-0000', 'aaaa1111-0000'])
+  await run($, 'host', 'off')
+  expect((store.get('hosts') as any[]).map(h => h.id)).toEqual(['bbbb2222-0000'])
   expect(store.get('host')).toMatchObject({ id: 'bbbb2222-0000' })
 })
 

@@ -13,7 +13,7 @@ State is plain files under `~/.ai-link` (override with `LINK_HOME`). Nothing lea
 | `link_peers` | List the other running sessions (name, CLI and current model, folder; it also tells the caller its own model); inside tmux it also lists AI sessions (claude, codex, agy, qwen, gemini) in other panes of the same window that have not joined link yet |
 | `link_tell` / `link_tellall` | Message one session (name or id prefix) or all |
 | `link_inbox` | Read and clear what was sent to you; `wait_seconds` waits for something |
-| `link_host` | Become the host (or stop) |
+| `link_host` | Become a host (or stop); several sessions can host at once (`~/.ai-link/hosts/<id>.json`) |
 | `link_assign` | Host: give a task to a worker or `all` |
 | `link_report` | Worker: send a task's result back |
 | `link_board` | Host: show tasks; `clear` drops finished ones |

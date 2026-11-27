@@ -10,6 +10,7 @@ import crypto from 'node:crypto'
 import { execFile, execFileSync } from 'node:child_process'
 import { ancestors, windowPid, winType } from './proc.mjs'
 import { detectModel } from './model.mjs'
+import { readHosts, addHost, removeHost } from './hosts.mjs'
 
 const HOME = process.env.LINK_HOME || path.join(os.homedir(), '.ai-link')
 const CLI = process.env.LINK_CLI || 'agent'
@@ -101,13 +102,13 @@ const pick = (list, q) => {
   return list.filter(p => p.name.toLowerCase().startsWith(w) || p.id.startsWith(q))
 }
 
-const hostRecord = () => {
-  const h = readJson(dir('host.json'))
-  if (!h) return null
+// Several sessions can host at once; only hosts whose session is still running count.
+const liveHosts = () => readHosts(HOME).filter(h => {
   const p = readJson(dir('peers', `${h.id}.json`))
-  return p && Date.now() - p.seen <= STALE_MS && alive(p.pid) ? h : null
-}
-const amHost = () => hostRecord()?.id === ID
+  return p && Date.now() - p.seen <= STALE_MS && alive(p.pid)
+})
+const isHostId = id => liveHosts().some(h => h.id === id)
+const amHost = () => isHostId(ID)
 
 // ---------- messages ----------
 const send = (to, kind, body) => {
@@ -228,10 +229,9 @@ const applyRenames = () => {
     const m = readJson(path.join(box, f))
     if (m && m.kind === 'rename') {
       fs.rmSync(path.join(box, f), { force: true })
-      const h = readJson(dir('host.json'))
       const name = String(m.name || '').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 60)
       const remoteHost = m.via === 'lan' && readJson(dir('peers', `${m.from}.json`))?.isHost === true
-      if (((h && h.id === m.from) || remoteHost) && name) {
+      if ((readHosts(HOME).some(h => h.id === m.from) || remoteHost) && name) {
         myName = name
         beat()
       }
@@ -296,7 +296,7 @@ const TOOLS = [
   { name: 'link_tell', description: 'Send a message to one other session in tmux (pass include_non_tmux: true only when the user explicitly asks for a non-tmux session).', inputSchema: { type: 'object', properties: { to: { type: 'string' }, text: { type: 'string' }, include_non_tmux: INCLUDE_NON_TMUX_PROP }, required: ['to', 'text'] } },
   { name: 'link_tellall', description: 'Send a message to every other tmux session (pass include_non_tmux: true only when the user explicitly asks).', inputSchema: { type: 'object', properties: { text: { type: 'string' }, include_non_tmux: INCLUDE_NON_TMUX_PROP }, required: ['text'] } },
   { name: 'link_inbox', description: 'Fallback only: messages, tasks and results are normally typed into your prompt as [link ...] lines. Reads and clears anything that could not be typed. wait_seconds (max 120) waits for something to arrive.', inputSchema: { type: 'object', properties: { wait_seconds: { type: 'number' } } } },
-  { name: 'link_host', description: 'Make this session the host that hands out work (on: true), or stop hosting (on: false).', inputSchema: { type: 'object', properties: { on: { type: 'boolean' } } } },
+  { name: 'link_host', description: 'Make this session a host that hands out work (on: true), or stop hosting (on: false). Several sessions can be hosts at once.', inputSchema: { type: 'object', properties: { on: { type: 'boolean' } } } },
   { name: 'link_assign', description: 'Host only. Give a task to a tmux worker session by name, or "all" (only tmux AIs by default; pass include_non_tmux: true only when the user explicitly asks). Results are typed into your prompt as [link RESULT ...] lines and shown by link_board.', inputSchema: { type: 'object', properties: { worker: { type: 'string' }, task: { type: 'string' }, include_non_tmux: INCLUDE_NON_TMUX_PROP }, required: ['worker', 'task'] } },
   { name: 'link_report', description: 'Worker only. Send the result of an assigned task back to the host.', inputSchema: { type: 'object', properties: { task_id: { type: 'string' }, result: { type: 'string' } }, required: ['task_id', 'result'] } },
   { name: 'link_board', description: 'Host only. Show the task board; clear: true drops finished tasks.', inputSchema: { type: 'object', properties: { clear: { type: 'boolean' } } } },
@@ -321,7 +321,7 @@ const call = async (name, a) => {
   if (gone.length) return fail(`${name} needs ${gone.map(k => `"${k}"`).join(' and ')} (got ${Object.keys(a).map(k => `"${k}"`).join(', ') || 'no arguments'}).`)
   switch (name) {
     case 'link_peers': {
-      const h = hostRecord()
+      const others = liveHosts().filter(h => h.id !== ID).map(h => h.name)
       const { list, hidden } = scopedPeers(Boolean(a.include_non_tmux))
       const here = (await windowAis()).filter(w => !list.some(p => p.pane === w.pane))
       const extra = here.length ? `\nIn this tmux window, not linked yet: ${here.map(w => `${w.cli} (pane ${w.pane})`).join(', ')}. Ask the person to start link in them, or use link-grid.sh.` : ''
@@ -331,7 +331,7 @@ const call = async (name, a) => {
         detectModel({ cli: CLI, pid: myChain[0], pane: PANE }),
         ...list.map(p => (p.remote ? '' : detectModel({ cli: p.cli, pid: p.chain?.[0], pane: p.pane }))),
       ])
-      return ok(`You are "${myName}" [${CLI}${mine ? `, ${mine}` : ''}]${amHost() ? ' (host)' : ''}.${h && !amHost() ? ` Host: ${h.name}.` : ''}\n${listWith(list, models)}${extra}${hiddenNote}`)
+      return ok(`You are "${myName}" [${CLI}${mine ? `, ${mine}` : ''}]${amHost() ? ' (host)' : ''}.${others.length ? ` ${amHost() ? 'Other hosts' : others.length > 1 ? 'Hosts' : 'Host'}: ${others.join(', ')}.` : ''}\n${listWith(list, models)}${extra}${hiddenNote}`)
     }
     case 'link_tell': {
       const includeNonTmux = Boolean(a.include_non_tmux)
@@ -364,19 +364,19 @@ const call = async (name, a) => {
     }
     case 'link_host': {
       if (a.on === false) {
-        if (amHost()) fs.rmSync(dir('host.json'), { force: true })
+        removeHost(HOME, ID)
         return ok('No longer hosting.')
       }
-      const h = hostRecord()
-      if (h && h.id !== ID) return fail(`"${h.name}" is already the host. It must stop hosting first.`)
-      writeJson(dir('host.json'), { id: ID, name: myName })
-      return ok(`${myName} is the host. Use link_assign to hand out work.`)
+      addHost(HOME, ID, myName)
+      const others = liveHosts().filter(h => h.id !== ID).map(h => h.name)
+      return ok(`${myName} is a host${others.length ? ` (with ${others.join(', ')})` : ''}. Use link_assign to hand out work.`)
     }
     case 'link_assign': {
-      if (!amHost()) return fail('This session is not the host. Call link_host first.')
+      if (!amHost()) return fail('This session is not a host. Call link_host first.')
       const includeNonTmux = Boolean(a.include_non_tmux)
       const { list } = scopedPeers(includeNonTmux)
-      const chosen = a.worker === 'all' ? list : pick(list, a.worker)
+      const hosts = liveHosts().map(h => h.id)
+      const chosen = a.worker === 'all' ? list.filter(p => !hosts.includes(p.id)) : pick(list, a.worker)
       if (chosen.length === 0) {
         if (a.worker !== 'all' && !includeNonTmux) {
           const nonTmux = pick(peers(), a.worker)
@@ -408,7 +408,7 @@ const call = async (name, a) => {
       return ok('Result sent to the host.')
     }
     case 'link_board': {
-      if (!amHost()) return fail('This session is not the host.')
+      if (!amHost()) return fail('This session is not a host.')
       let tasks = loadTasks(ID)
       if (a.clear) {
         const before = tasks.length
@@ -420,7 +420,7 @@ const call = async (name, a) => {
       return ok(tasks.length ? tasks.map(x => `${icon[x.status]} ${x.id}  ${x.toName}: ${x.text.slice(0, 60)}${x.result ? `\n    ⇒ ${x.result.slice(0, 200)}` : ''}`).join('\n') : 'No tasks yet.')
     }
     case 'link_rename': {
-      if (!amHost()) return fail('This session is not the host.')
+      if (!amHost()) return fail('This session is not a host.')
       const m = pick(scopedPeers(Boolean(a.include_non_tmux)).list, a.worker)
       if (m.length !== 1) return fail(m.length ? `"${a.worker}" is ambiguous.` : `No session matches "${a.worker}".`)
       send(m[0].id, 'rename', { name: String(a.name) })
@@ -432,7 +432,7 @@ const call = async (name, a) => {
 }
 
 // ---------- MCP over stdio ----------
-const INSTRUCTIONS = `You can message other coding-agent sessions on this machine (and on other machines on the same network when lan.mjs runs; link_peers shows them as "on <machine>"). By default ONLY AI sessions running inside tmux are used unless the user explicitly asks for non-tmux sessions (pass include_non_tmux: true). Call link_peers to see tmux sessions, link_tell to message one, and messages, tasks and results sent to you are typed into your prompt automatically (tagged [link ...]); link_inbox is only a fallback for anything that could not be typed. One session can call link_host and then link_assign tasks; a worker answers with link_report. Your chat text is never seen by other sessions: answer a [link MESSAGE ...] with link_tell to its sender, and a [link TASK ...] with link_report.`
+const INSTRUCTIONS = `You can message other coding-agent sessions on this machine (and on other machines on the same network when lan.mjs runs; link_peers shows them as "on <machine>"). By default ONLY AI sessions running inside tmux are used unless the user explicitly asks for non-tmux sessions (pass include_non_tmux: true). Call link_peers to see tmux sessions, link_tell to message one, and messages, tasks and results sent to you are typed into your prompt automatically (tagged [link ...]); link_inbox is only a fallback for anything that could not be typed. Any session can call link_host (several can host at once) and then link_assign tasks; a worker answers with link_report. Your chat text is never seen by other sessions: answer a [link MESSAGE ...] with link_tell to its sender, and a [link TASK ...] with link_report.`
 
 const reply = (id, result) => process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id, result }) + '\n')
 const error = (id, code, message) => process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id, error: { code, message } }) + '\n')
@@ -478,7 +478,7 @@ process.stdin.on('data', chunk => {
 
 const bye = () => {
   fs.rmSync(dir('peers', `${ID}.json`), { force: true })
-  if (amHost()) fs.rmSync(dir('host.json'), { force: true })
+  removeHost(HOME, ID)
   process.exit(0)
 }
 process.stdin.on('end', bye)
