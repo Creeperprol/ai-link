@@ -32,3 +32,5 @@ Open `AILinkRemote.xcodeproj`, run on **My Mac** or your iPhone, then in **Setti
 Debug builds accept a `-mock` launch argument that shows sample sessions.
 
 The key is the only protection on the relay: keep `cloud.json` private and never commit it.
+
+**Chat view.** A session opens on **Chat**: the whole conversation, which `link-bridge/chat.mjs` on the Mac reads from Claude Code's transcript, the Codex session file whose text matches the pane, or the pane's full tmux history. The cloud agent sends it in pieces of up to 19000 characters (the relay keeps 20000 per item) under the ids `<session>-chat-last` and `<session>-chat-<n>`, headed `#chat <n>/<total>`, counted from the start so older pieces never change; the app shows the newest and loads older ones with **Earlier messages**. **Terminal** is the live pane.

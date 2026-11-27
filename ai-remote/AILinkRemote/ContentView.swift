@@ -405,6 +405,11 @@ private struct PaneViewerSheet: View {
     @State private var lines: [AttributedString] = []
     /// Keep the view pinned to the newest output; turned off when the person scrolls up to read.
     @State private var follow = true
+    /// "chat" = the whole conversation (sent by the Mac in pieces), "terminal" = the live screen.
+    @State private var mode = "chat"
+    @State private var chatPieces: [Int: String] = [:]
+    @State private var chatTotal = 0
+    @State private var loadingEarlier = false
     @State private var inputText = ""
     @FocusState private var inputFocused: Bool
     @Environment(\.dismiss) private var dismiss
@@ -412,9 +417,34 @@ private struct PaneViewerSheet: View {
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
+                Picker("View", selection: $mode) {
+                    Text("Chat").tag("chat")
+                    Text("Terminal").tag("terminal")
+                }
+                .pickerStyle(.segmented)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .onChange(of: mode) { _, _ in
+                    follow = true
+                    output = mode == "chat" && !chatPieces.isEmpty ? joinedChat() : "Loading..."
+                    Task { await refreshCurrent() }
+                }
+
                 ScrollViewReader { proxy in
                     ScrollView(.vertical) {
                         LazyVStack(alignment: .leading, spacing: 0) {
+                            if mode == "chat", let first = chatPieces.keys.min(), first > 0 {
+                                Button {
+                                    Task { await loadEarlier() }
+                                } label: {
+                                    Label(loadingEarlier ? "Loading…" : "Earlier messages (\(first) more)", systemImage: "arrow.up.circle")
+                                        .font(.caption.weight(.semibold))
+                                }
+                                .buttonStyle(.bordered)
+                                .disabled(loadingEarlier)
+                                .frame(maxWidth: .infinity)
+                                .padding(.bottom, 8)
+                            }
                             ForEach(lines.indices, id: \.self) { i in
                                 Text(lines[i])
                                     .fixedSize(horizontal: false, vertical: true)
@@ -446,9 +476,9 @@ private struct PaneViewerSheet: View {
                             .padding(10)
                         }
                     }
-                    .onAppear { lines = ANSIText.lines(output) }
+                    .onAppear { lines = renderLines(output) }
                     .onChange(of: output) { _, newValue in
-                        lines = ANSIText.lines(newValue)
+                        lines = renderLines(newValue)
                         if follow {
                             DispatchQueue.main.async { proxy.scrollTo("bottom", anchor: .bottom) }
                         }
@@ -462,7 +492,7 @@ private struct PaneViewerSheet: View {
                         Button("Enter") {
                             Task {
                                 await client.nudge(id: peer.id, action: "enter")
-                                output = await client.fetchPane(id: peer.id)
+                                await refreshCurrent()
                             }
                         }
                         .buttonStyle(.bordered)
@@ -471,7 +501,7 @@ private struct PaneViewerSheet: View {
                         Button("Yes (y)") {
                             Task {
                                 await client.nudge(id: peer.id, action: "yes")
-                                output = await client.fetchPane(id: peer.id)
+                                await refreshCurrent()
                             }
                         }
                         .buttonStyle(.bordered)
@@ -480,7 +510,7 @@ private struct PaneViewerSheet: View {
                         Button("↑") {
                             Task {
                                 await client.nudge(id: peer.id, action: "up")
-                                output = await client.fetchPane(id: peer.id)
+                                await refreshCurrent()
                             }
                         }
                         .buttonStyle(.bordered)
@@ -489,7 +519,7 @@ private struct PaneViewerSheet: View {
                         Button("↓") {
                             Task {
                                 await client.nudge(id: peer.id, action: "down")
-                                output = await client.fetchPane(id: peer.id)
+                                await refreshCurrent()
                             }
                         }
                         .buttonStyle(.bordered)
@@ -498,7 +528,7 @@ private struct PaneViewerSheet: View {
                         Button("Esc") {
                             Task {
                                 await client.nudge(id: peer.id, action: "esc")
-                                output = await client.fetchPane(id: peer.id)
+                                await refreshCurrent()
                             }
                         }
                         .buttonStyle(.bordered)
@@ -507,14 +537,14 @@ private struct PaneViewerSheet: View {
                         Button("Ctrl-C", role: .destructive) {
                             Task {
                                 await client.nudge(id: peer.id, action: "ctrl-c")
-                                output = await client.fetchPane(id: peer.id)
+                                await refreshCurrent()
                             }
                         }
                         .buttonStyle(.bordered)
                         .font(.caption)
 
                         Button("Refresh") {
-                            Task { output = await client.fetchPane(id: peer.id) }
+                            Task { await refreshCurrent() }
                         }
                         .buttonStyle(.bordered)
                         .font(.caption)
@@ -574,7 +604,7 @@ private struct PaneViewerSheet: View {
                         Task {
                             await client.sendPrompt(to: peer.id, text: text, kind: "raw")
                             try? await Task.sleep(nanoseconds: 300_000_000)
-                            output = await client.fetchPane(id: peer.id)
+                            await refreshCurrent()
                         }
                     }
                     .buttonStyle(.borderedProminent)
@@ -593,8 +623,8 @@ private struct PaneViewerSheet: View {
             }
             .task {
                 while !Task.isCancelled {
-                    output = await client.fetchPane(id: peer.id)
-                    try? await Task.sleep(nanoseconds: 1_500_000_000)
+                    await refreshCurrent()
+                    try? await Task.sleep(nanoseconds: mode == "chat" ? 3_000_000_000 : 1_500_000_000)
                 }
             }
         }
@@ -603,11 +633,79 @@ private struct PaneViewerSheet: View {
         #endif
     }
 
+    /// Fetches what the current view shows: the live screen, or the newest piece of the chat.
+    private func refreshCurrent() async {
+        if mode == "terminal" {
+            output = await client.fetchPane(id: peer.id)
+            return
+        }
+        let raw = await client.fetchPane(id: "\(peer.id)-chat-last")
+        guard let piece = parseChat(raw) else {
+            if chatPieces.isEmpty { output = raw } // "Waiting for the Mac…" on the first request
+            return
+        }
+        let previousLast = chatTotal - 1
+        chatTotal = piece.total
+        chatPieces[piece.index] = piece.text
+        // The old last piece was still growing when it was fetched: get its final text.
+        if piece.index > previousLast, previousLast >= 0, chatPieces[previousLast] != nil {
+            Task { _ = await loadPiece(previousLast) }
+        }
+        if mode == "chat" { output = joinedChat() }
+    }
+
+    /// "#chat <index>/<total>\n<text>" from the Mac's cloud agent.
+    private func parseChat(_ raw: String) -> (index: Int, total: Int, text: String)? {
+        guard raw.hasPrefix("#chat "), let nl = raw.firstIndex(of: "\n") else { return nil }
+        let head = raw[raw.index(raw.startIndex, offsetBy: 6)..<nl].split(separator: "/")
+        guard head.count == 2, let index = Int(head[0]), let total = Int(head[1]) else { return nil }
+        return (index, total, String(raw[raw.index(after: nl)...]))
+    }
+
+    private func joinedChat() -> String {
+        chatPieces.keys.sorted().compactMap { chatPieces[$0] }.joined(separator: "\n")
+    }
+
+    /// Asks for one piece; the first request only tells the Mac to send it, so retry until it arrives.
+    private func loadPiece(_ index: Int) async -> Bool {
+        for _ in 0..<8 {
+            let raw = await client.fetchPane(id: "\(peer.id)-chat-\(index)")
+            if let piece = parseChat(raw), piece.index == index {
+                chatPieces[index] = piece.text
+                if mode == "chat" { output = joinedChat() }
+                return true
+            }
+            try? await Task.sleep(nanoseconds: 1_500_000_000)
+        }
+        return false
+    }
+
+    private func loadEarlier() async {
+        guard let first = chatPieces.keys.min(), first > 0 else { return }
+        follow = false
+        loadingEarlier = true
+        _ = await loadPiece(first - 1)
+        loadingEarlier = false
+    }
+
+    /// Terminal: ANSI colours. Chat: the person's own messages ("❯ ...") tinted so the turns are easy to tell apart.
+    private func renderLines(_ text: String) -> [AttributedString] {
+        var result = ANSIText.lines(text)
+        guard mode == "chat" else { return result }
+        var inUser = false
+        for i in result.indices {
+            let line = String(result[i].characters)
+            if line.hasPrefix("❯ ") { inUser = true } else if line.hasPrefix("⏺ ") { inUser = false }
+            if inUser { result[i].foregroundColor = Color(red: 0.45, green: 0.80, blue: 1.0) }
+        }
+        return result
+    }
+
     private func sendModelCommand(_ cmd: String) {
         Task {
             await client.sendPrompt(to: peer.id, text: cmd, kind: "raw")
             try? await Task.sleep(nanoseconds: 300_000_000)
-            output = await client.fetchPane(id: peer.id)
+            await refreshCurrent()
         }
     }
 }
